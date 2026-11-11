@@ -13,6 +13,9 @@ $program = (int) ($_GET['program'] ?? 0);
 $yearLevel = (string) ($_GET['year_level'] ?? '');
 $semester = (int) ($_GET['semester'] ?? 0);
 $scope = scoped_program_ids($user);
+if ($program > 0 && is_array($scope) && !in_array($program, $scope, true)) {
+    $program = 0;
+}
 
 $sql = 'SELECT pa.id FROM professor_assignments pa
         JOIN subjects s ON s.id = pa.subject_id
@@ -38,88 +41,178 @@ $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
-$statusCounts = [];
-$subjectPredicted = [];
-$periodTotals = ['prelim' => [], 'midterm' => [], 'finals' => []];
 $totalStudentsEvaluated = 0;
 $overallPredictedSum = 0;
 
 foreach ($ids as $id) {
     $book = build_gradebook((int) $id);
-    $status = $book['assignment']['submission_status'] ?? 'draft';
-    $statusCounts[$status] = ($statusCounts[$status] ?? 0) + 1;
-    $sum = 0;
-    $n = 0;
     foreach ($book['students'] as $student) {
         if ($student['predicted_percent'] !== null) {
-            $sum += $student['predicted_percent'];
             $overallPredictedSum += $student['predicted_percent'];
             $totalStudentsEvaluated++;
-            $n++;
         }
-        foreach ($periodTotals as $period => $ignored) {
-            if ($student['periods'][$period]['percent'] !== null) {
-                $periodTotals[$period][] = $student['periods'][$period]['percent'];
-            }
-        }
-    }
-    if ($n > 0) {
-        $subjectPredicted[$book['assignment']['subject_code']] = round($sum / $n, 2);
     }
 }
 
-$dlpl = db()->query("SELECT status, COUNT(*) AS total FROM dl_pl_evaluations WHERE basis = 'official' GROUP BY status")->fetchAll();
-$programs = db()->query('SELECT id, code FROM programs ORDER BY code')->fetchAll();
+$dlplSql = "SELECT e.status, COUNT(*) AS total
+            FROM dl_pl_evaluations e
+            JOIN students st ON st.id = e.student_id
+            WHERE e.basis = 'official'";
+$dlplParams = [];
+if (is_array($scope)) {
+    if ($scope === []) {
+        $dlplSql .= ' AND 1 = 0';
+    } else {
+        $dlplSql .= ' AND st.program_id IN (' . implode(',', array_map('intval', $scope)) . ')';
+    }
+}
+if ($program > 0) {
+    $dlplSql .= ' AND st.program_id = ?';
+    $dlplParams[] = $program;
+}
+$dlplSql .= ' GROUP BY e.status';
+$dlplStmt = db()->prepare($dlplSql);
+$dlplStmt->execute($dlplParams);
+$dlplRows = $dlplStmt->fetchAll();
+$dlplBuckets = ['President’s List' => 0, 'Dean’s List' => 0, 'Not Qualified' => 0];
+foreach ($dlplRows as $row) {
+    $status = strtolower((string) $row['status']);
+    $total = (int) $row['total'];
+    if (str_contains($status, 'possible pl') || str_contains($status, 'president')) {
+        $dlplBuckets['President’s List'] += $total;
+    } elseif (str_contains($status, 'possible dl') || str_contains($status, 'dean')) {
+        $dlplBuckets['Dean’s List'] += $total;
+    } else {
+        $dlplBuckets['Not Qualified'] += $total;
+    }
+}
+
+$populationSql = 'SELECT sem.id, ay.label AS year_label, sem.name AS semester_name,
+        SUM(CASE
+            WHEN e.status IN ("Possible DL", "Dean\'s List", "DL") THEN 1
+            WHEN e.status = "Final Approved" AND rc.list_type = "DL" THEN 1
+            ELSE 0
+        END) AS dl_count,
+        SUM(CASE
+            WHEN e.status IN ("Possible PL", "President\'s List", "PL") THEN 1
+            WHEN e.status = "Final Approved" AND rc.list_type = "PL" THEN 1
+            ELSE 0
+        END) AS pl_count
+    FROM dl_pl_evaluations e
+    JOIN students st ON st.id = e.student_id
+    JOIN semesters sem ON sem.id = e.semester_id
+    JOIN academic_years ay ON ay.id = sem.academic_year_id
+    LEFT JOIN recognition_cases rc ON rc.student_id = e.student_id AND rc.semester_id = e.semester_id
+    WHERE e.basis = "official"';
+$populationParams = [];
+if (is_array($scope)) {
+    if ($scope === []) {
+        $populationSql .= ' AND 1 = 0';
+    } else {
+        $populationSql .= ' AND st.program_id IN (' . implode(',', array_map('intval', $scope)) . ')';
+    }
+}
+if ($program > 0) {
+    $populationSql .= ' AND st.program_id = ?';
+    $populationParams[] = $program;
+}
+if ($yearLevel !== '') {
+    $populationSql .= ' AND st.year_level = ?';
+    $populationParams[] = $yearLevel;
+}
+$populationSql .= ' GROUP BY sem.id, ay.label, sem.name ORDER BY ay.label ASC, sem.name ASC';
+$populationStmt = db()->prepare($populationSql);
+$populationStmt->execute($populationParams);
+$populationRows = $populationStmt->fetchAll();
+
+$populationLabels = [];
+$populationDl = [];
+$populationPl = [];
+$populationSample = false;
+$qualifiedTotal = 0;
+foreach ($populationRows as $row) {
+    $dlCount = (int) $row['dl_count'];
+    $plCount = (int) $row['pl_count'];
+    $qualifiedTotal += $dlCount + $plCount;
+    $populationLabels[] = trim((string) $row['semester_name'] . ' ' . (string) $row['year_label']);
+    $populationDl[] = $dlCount;
+    $populationPl[] = $plCount;
+}
+if ($qualifiedTotal === 0) {
+    $populationSample = true;
+    $populationLabels = [
+        '1st Sem 2024–2025',
+        '2nd Sem 2024–2025',
+        '1st Sem 2025–2026',
+        '2nd Sem 2025–2026',
+        '1st Sem 2026–2027',
+    ];
+    $populationDl = [35, 42, 48, 55, 46];
+    $populationPl = [12, 16, 20, 24, 18];
+}
+$populationTable = [];
+foreach ($populationLabels as $index => $label) {
+    $populationTable[] = [
+        'semester' => $label,
+        'dl' => $populationDl[$index],
+        'pl' => $populationPl[$index],
+    ];
+}
+$latestIndex = count($populationDl) - 1;
+$previousIndex = $latestIndex - 1;
+$dlMove = $previousIndex >= 0 ? $populationDl[$latestIndex] - $populationDl[$previousIndex] : 0;
+$plMove = $previousIndex >= 0 ? $populationPl[$latestIndex] - $populationPl[$previousIndex] : 0;
+
+$programs = programs_for_user($user, 'id, code');
 $semesters = db()->query('SELECT sem.id, sem.name, ay.label FROM semesters sem JOIN academic_years ay ON ay.id = sem.academic_year_id')->fetchAll();
-$legacy = db()->query('SELECT * FROM legacy_predictions ORDER BY recorded_at')->fetchAll();
 
-$periodAverages = [];
-foreach ($periodTotals as $period => $values) {
-    $periodAverages[PERIODS[$period]] = $values === [] ? null : round(array_sum($values) / count($values), 2);
-}
+$trendTone = static function (?float $delta): string {
+    if ($delta === null || abs($delta) < 0.05) {
+        return 'flat';
+    }
+    return $delta > 0 ? 'up' : 'down';
+};
 
 $chart = [
-    'dlplLabels' => array_column($dlpl, 'status'),
-    'dlplValues' => array_map('intval', array_column($dlpl, 'total')),
-    'subjectLabels' => array_keys($subjectPredicted),
-    'subjectValues' => array_values($subjectPredicted),
-    'periodLabels' => array_keys($periodAverages),
-    'periodValues' => array_values($periodAverages),
-    'statusLabels' => array_map(static fn ($s) => submission_label($s), array_keys($statusCounts)),
-    'statusValues' => array_values($statusCounts),
+    'dlplTrendLabels' => $populationLabels,
+    'dlplPl' => $populationPl,
+    'dlplDl' => $populationDl,
+    'populationSample' => $populationSample,
+    'dlplLabels' => array_keys($dlplBuckets),
+    'dlplValues' => array_values($dlplBuckets),
 ];
 
-// Top Metrics
 $totalFilteredAssignments = count($ids);
-$totalDlPlQualifiers = array_sum(array_column($dlpl, 'total'));
-$overallAveragePredicted = $totalStudentsEvaluated > 0 ? round($overallPredictedSum / $totalStudentsEvaluated, 2) . '%' : 'N/A';
+$totalDlPlQualifiers = $dlplBuckets['President’s List'] + $dlplBuckets['Dean’s List'];
+$overallAveragePredicted = $totalStudentsEvaluated > 0 ? round($overallPredictedSum / $totalStudentsEvaluated, 2) : null;
 
 layout_start('Analytics', 'analytics', [['label' => 'Analytics']]);
 ?>
 <div class="page-head">
     <div>
         <h1>Analytics</h1>
-        <p class="lede">Charts use records already in the database. They do not approve grades or scholarships.</p>
+        <p class="lede">Official DL and PL mix, and how many students qualified in each semester.</p>
     </div>
 </div>
 
-<!-- KPI Summary Header -->
-<section class="kpis">
+<section class="kpis" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
     <article class="kpi">
-        <span>Filtered Class Sections</span>
-        <strong><?= $totalFilteredAssignments ?></strong>
+        <span>Predicted class average</span>
+        <strong><?= $overallAveragePredicted === null ? 'N/A' : h(number_format($overallAveragePredicted, 2) . '%') ?></strong>
+        <small><?= (int) $totalStudentsEvaluated ?> evaluated students</small>
     </article>
     <article class="kpi">
-        <span>Evaluated DL / PL Candidates</span>
-        <strong><?= $totalDlPlQualifiers ?></strong>
+        <span>DL / PL qualified</span>
+        <strong><?= (int) $totalDlPlQualifiers ?></strong>
+        <small><?= (int) $dlplBuckets['Not Qualified'] ?> not qualified</small>
     </article>
     <article class="kpi">
-        <span>Overall Average Performance</span>
-        <strong><?= $overallAveragePredicted ?></strong>
+        <span>Tracked sheets</span>
+        <strong><?= (int) $totalFilteredAssignments ?></strong>
+        <small>Filtered class sections</small>
     </article>
 </section>
 
-<!-- Filter Controls -->
 <section class="card" style="margin-bottom: 18px;">
     <form class="filters" method="get" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
         <div style="flex: 1; min-width: 180px;">
@@ -131,7 +224,6 @@ layout_start('Analytics', 'analytics', [['label' => 'Analytics']]);
                 <?php endforeach; ?>
             </select>
         </div>
-        
         <div style="flex: 1; min-width: 180px;">
             <label for="year_level">Year level</label>
             <select id="year_level" name="year_level" style="width: 100%;">
@@ -141,7 +233,6 @@ layout_start('Analytics', 'analytics', [['label' => 'Analytics']]);
                 <?php endforeach; ?>
             </select>
         </div>
-        
         <div style="flex: 1; min-width: 200px;">
             <label for="semester">Semester</label>
             <select id="semester" name="semester" style="width: 100%;">
@@ -151,83 +242,150 @@ layout_start('Analytics', 'analytics', [['label' => 'Analytics']]);
                 <?php endforeach; ?>
             </select>
         </div>
-        
         <div>
             <button class="btn btn-sm" type="submit"><?= icon('search') ?> Filter</button>
         </div>
     </form>
 </section>
 
-<!-- Analytical Charts Grid -->
-<section class="charts" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 18px; margin-bottom: 18px;">
-    <article class="card chart-box">
-        <h2><?= icon('award') ?> Official DL / PL</h2>
+<section class="card chart-box chart-box-mix" style="margin-bottom: 18px;">
+    <h2><?= icon('award') ?> Official DL / PL mix</h2>
+    <p class="hint">Students qualified for PL, DL, or not qualified.</p>
+    <div class="mix-chart">
         <canvas id="dlplChart"></canvas>
-    </article>
-    <article class="card chart-box">
-        <h2><?= icon('analytics') ?> Average predicted percent</h2>
-        <canvas id="subjectChart"></canvas>
-    </article>
-    <article class="card chart-box">
-        <h2><?= icon('sheet') ?> Encoded period averages</h2>
-        <canvas id="periodChart"></canvas>
-    </article>
-    <article class="card chart-box">
-        <h2><?= icon('queue') ?> Submission progress</h2>
-        <canvas id="statusChart"></canvas>
-    </article>
+    </div>
 </section>
 
-<!-- Preserved History Table -->
-<section class="card">
-    <h2><?= icon('audit') ?> Preserved predictor history</h2>
-    <p class="hint">These three sessions were kept from the previous grade predictor. They are not official grades.</p>
-    
-    <div class="table-wrap" style="margin-top: 12px;">
-        <table>
+<section class="card chart-box chart-box-wide" style="margin-bottom: 18px;">
+    <div class="rate-chart-head">
+        <div>
+            <h2><?= icon('analytics') ?> DL / PL Population Trends</h2>
+            <p class="hint">
+                <?php if ($populationSample): ?>
+                    SAMPLE / DEMO historical data. These counts are not student records.
+                <?php else: ?>
+                    Official Dean’s List and President’s List students in each semester.
+                <?php endif; ?>
+            </p>
+        </div>
+        <span class="trend-pill trend-<?= h($trendTone((float) ($dlMove + $plMove))) ?>">
+            DL <?= $dlMove > 0 ? '+' : '' ?><?= (int) $dlMove ?> · PL <?= $plMove > 0 ? '+' : '' ?><?= (int) $plMove ?>
+        </span>
+    </div>
+    <div style="height: 280px; position: relative;">
+        <canvas id="dlplTrendChart"></canvas>
+    </div>
+    <div class="table-wrap" style="margin-top: 16px;">
+        <table class="data">
             <thead>
                 <tr>
-                    <th>Student</th>
-                    <th>Subject</th>
-                    <th>Predicted %</th>
-                    <th>Equivalent</th>
-                    <th>Status</th>
-                    <th>Recorded</th>
+                    <th>Semester</th>
+                    <th>DL Students</th>
+                    <th>PL Students</th>
                 </tr>
             </thead>
             <tbody>
-            <?php foreach ($legacy as $row): ?>
-                <tr>
-                    <td><?= h($row['student_name']) ?><br><span class="mono" style="font-size: 12px; color: var(--text-muted, #666);"><?= h($row['student_number']) ?></span></td>
-                    <td><?= h($row['subject_name']) ?></td>
-                    <td><strong><?= h((string) $row['predicted_percent']) ?>%</strong></td>
-                    <td><span class="mono"><?= h((string) $row['numerical_grade']) ?></span></td>
-                    <td><?= badge($row['dlpl_status'], $row['dlpl_status']) ?></td>
-                    <td><?= fmt_when($row['recorded_at']) ?></td>
-                </tr>
-            <?php endforeach; ?>
+                <?php foreach ($populationTable as $row): ?>
+                    <tr>
+                        <td><?= h($row['semester']) ?></td>
+                        <td class="num"><?= (int) $row['dl'] ?></td>
+                        <td class="num"><?= (int) $row['pl'] ?></td>
+                    </tr>
+                <?php endforeach; ?>
             </tbody>
         </table>
     </div>
 </section>
 
-<script type="application/json" id="chartData"><?= json_encode($chart, JSON_HEX_TAG | JSON_HEX_AMP) ?></script>
+<script type="application/json" id="chartData"><?= json_encode($chart, JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
-const data = JSON.parse(document.getElementById('chartData').textContent);
-if (window.Chart) {
-    const navy = '#142B49';
-    const gold = '#C5A45B';
-    const make = (id, type, labels, values) => new Chart(document.getElementById(id), {
-        type,
-        data: { labels, datasets: [{ data: values, backgroundColor: [navy, gold, '#1F9D45', '#2457D6', '#D7263D', '#6B3FE0'] }] },
-        options: { plugins: { legend: { display: type === 'doughnut' } }, scales: type === 'doughnut' ? {} : { y: { beginAtZero: true } } }
-    });
-    make('dlplChart', 'doughnut', data.dlplLabels, data.dlplValues);
-    make('subjectChart', 'bar', data.subjectLabels, data.subjectValues);
-    make('periodChart', 'bar', data.periodLabels, data.periodValues);
-    make('statusChart', 'bar', data.statusLabels, data.statusValues);
-}
-</script>
+(function () {
+    const raw = document.getElementById('chartData');
+    if (!raw || !window.Chart) return;
+    const data = JSON.parse(raw.textContent);
 
+    new Chart(document.getElementById('dlplChart'), {
+        type: 'doughnut',
+        data: {
+            labels: data.dlplLabels,
+            datasets: [{
+                data: data.dlplValues,
+                backgroundColor: ['#C5A45B', '#2457D6', '#94A3B8']
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: { legend: { position: 'bottom' } }
+        }
+    });
+
+    const plTrend = (data.dlplPl || []).map(Number);
+    const dlTrend = (data.dlplDl || []).map(Number);
+    new Chart(document.getElementById('dlplTrendChart'), {
+        type: 'line',
+        data: {
+            labels: data.dlplTrendLabels || ['Prelim', 'Midterm', 'Finals'],
+            datasets: [
+                {
+                    label: "Dean's List",
+                    data: dlTrend,
+                    borderColor: '#2457D6',
+                    backgroundColor: '#2457D6',
+                    borderWidth: 3,
+                    tension: 0.35,
+                    pointRadius: 5,
+                    pointBackgroundColor: '#fff',
+                    pointBorderWidth: 2
+                },
+                {
+                    label: "President's List",
+                    data: plTrend,
+                    borderColor: '#16A34A',
+                    backgroundColor: '#16A34A',
+                    borderWidth: 3,
+                    tension: 0.35,
+                    pointRadius: 5,
+                    pointBackgroundColor: '#fff',
+                    pointBorderWidth: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        title: function (items) {
+                            return items.length ? items[0].label : '';
+                        },
+                        label: function (ctx) {
+                            const series = ctx.datasetIndex === 0 ? dlTrend : plTrend;
+                            const v = series[ctx.dataIndex];
+                            let move = '';
+                            if (ctx.dataIndex > 0) {
+                                const d = v - series[ctx.dataIndex - 1];
+                                move = ' (' + (d > 0 ? '+' : '') + d + ')';
+                            }
+                            return ctx.dataset.label + ': ' + v + ' students' + move;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: { precision: 0 },
+                    grid: { color: 'rgba(100, 116, 139, .18)' }
+                },
+                x: { grid: { display: false } }
+            }
+        }
+    });
+})();
+</script>
 <?php layout_end(); ?>

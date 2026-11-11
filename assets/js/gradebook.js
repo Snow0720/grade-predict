@@ -185,6 +185,15 @@
 
     async function save(input) {
         if (input.tagName === 'SELECT' && input.value === 'keep') return;
+        if (input.classList.contains('score')) {
+            const raw = input.value.trim();
+            if (raw !== '' && !/^\d+$/.test(raw)) {
+                input.classList.add('invalid');
+                setStatus('Whole number only');
+                toast('Enter a whole number, or leave the cell blank.', 'error');
+                return;
+            }
+        }
         const fields = scoreFields(input);
         setStatus('Saving…');
         input.classList.remove('invalid');
@@ -419,8 +428,123 @@
         });
     });
 
+    function scoreMax(input) {
+        const max = Number(input.dataset.max);
+        return Number.isFinite(max) ? max : 0;
+    }
+
+    function nextScoreValue(input, insert) {
+        const start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+        const end = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
+        return input.value.slice(0, start) + insert + input.value.slice(end);
+    }
+
+    function scoreFits(input, raw) {
+        const digits = String(raw).replace(/\D/g, '');
+        if (digits === '') return true;
+        return Number(digits) <= scoreMax(input);
+    }
+
+    function fitScore(input, raw) {
+        let digits = String(raw).replace(/\D/g, '');
+        const max = scoreMax(input);
+        while (digits !== '' && Number(digits) > max) {
+            digits = digits.slice(0, -1);
+        }
+        return digits;
+    }
+
+    function enforceDigitsOnly(input) {
+        if (input.dataset.digitsOnlyBound === '1') return;
+        input.dataset.digitsOnlyBound = '1';
+
+        input.addEventListener('keydown', function (e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.key === 'Tab') return;
+            if (e.shiftKey) {
+                e.preventDefault();
+                return;
+            }
+            const allowed = [
+                'Backspace', 'Delete', 'Escape', 'Enter',
+                'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+                'Home', 'End'
+            ];
+            if (allowed.includes(e.key)) return;
+
+            // Reject anything that is not a single digit 0-9 (blocks dot, letters, symbols, space)
+            if (!/^[0-9]$/.test(e.key)) {
+                e.preventDefault();
+                return;
+            }
+            if (!scoreFits(input, nextScoreValue(input, e.key))) {
+                e.preventDefault();
+            }
+        });
+
+        input.addEventListener('beforeinput', function (e) {
+            if (e.inputType === 'insertText' && e.data) {
+                if (!/^\d+$/.test(e.data) || !scoreFits(input, nextScoreValue(input, e.data))) {
+                    e.preventDefault();
+                }
+            }
+        });
+
+        input.addEventListener('paste', function (e) {
+            e.preventDefault();
+            const clip = e.clipboardData || window.clipboardData;
+            const text = clip ? clip.getData('text') : '';
+            const digits = text.replace(/\D/g, '');
+            if (!digits) return;
+
+            let start = this.value.length;
+            let end = this.value.length;
+            try {
+                if (typeof this.selectionStart === 'number') {
+                    start = this.selectionStart;
+                    end = this.selectionEnd;
+                }
+            } catch (err) {}
+
+            const cur = this.value;
+            const merged = cur.slice(0, start) + digits + cur.slice(end);
+            if (!scoreFits(this, merged)) return;
+            this.value = merged;
+            try {
+                if (typeof this.setSelectionRange === 'function') {
+                    this.setSelectionRange(start + digits.length, start + digits.length);
+                }
+            } catch (err) {}
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        input.addEventListener('drop', function (e) {
+            e.preventDefault();
+            const text = e.dataTransfer ? e.dataTransfer.getData('text') : '';
+            const digits = text.replace(/\D/g, '');
+            if (!digits || !scoreFits(this, digits)) return;
+            this.value = digits;
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+    }
+
     sheet.querySelectorAll('input.score, input.adj, select.attend').forEach(function (input) {
+        if (input.classList.contains('score')) {
+            enforceDigitsOnly(input);
+        }
         input.addEventListener('input', function () {
+            if (input.classList.contains('score') && input.value) {
+                const sel = typeof input.selectionStart === 'number' ? input.selectionStart : null;
+                const cleaned = fitScore(input, input.value);
+                if (cleaned !== input.value) {
+                    input.value = cleaned;
+                    if (sel !== null) {
+                        try {
+                            input.setSelectionRange(Math.min(cleaned.length, sel), Math.min(cleaned.length, sel));
+                        } catch (err) {}
+                    }
+                }
+            }
             paintRow(input.closest('tr'));
             clearTimeout(timers.get(input));
             timers.set(input, setTimeout(function () { save(input); }, 450));
@@ -431,6 +555,7 @@
             save(input);
         });
         input.addEventListener('keydown', function (event) {
+            if (event.defaultPrevented) return;
             const row = input.closest('tr');
             const rows = [...sheet.querySelectorAll('tbody tr')];
             const inputs = [...row.querySelectorAll('input.score, select.attend, input.adj')];

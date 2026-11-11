@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     $programs = [];
-    foreach (db()->query('SELECT id, code FROM programs') as $row) {
+    foreach (programs_for_user($user, 'id, code') as $row) {
         $programs[strtoupper($row['code'])] = (int) $row['id'];
     }
     $added = 0;
@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $report = compact('added', 'duplicates', 'rejected');
 }
 
-layout_start('Import Masterlist', 'import', [['label' => 'Import Masterlist']]);
+layout_start('Import Student Masterlist', 'import', [['label' => 'Import Masterlist']]);
 ?>
 <div class="page-head">
     <div>
@@ -141,13 +141,13 @@ layout_start('Import Masterlist', 'import', [['label' => 'Import Masterlist']]);
     <article class="card">
         <h2><?= icon('sheet') ?> Required CSV Headers</h2>
         <p class="hint">The first row of your CSV file must contain the following case-insensitive column names:</p>
-        <ul style="margin-top: 8px; padding-left: 20px; line-height: 1.6;">
-            <li><code>student_number</code> — e.g. <code>08-15-41258</code></li>
-            <li><code>full_name</code> — e.g. <code>Agpoon, Cyrus</code></li>
-            <li><code>student_type</code> — Must be <code>Regular</code> or <code>Irregular</code></li>
-            <li><code>program</code> — Program code e.g. <code>BSIT</code> or <code>BSHM</code></li>
-            <li><code>year_level</code> — e.g. <code>4th Year</code></li>
-            <li><code>section</code> — Assigned section e.g. <code>401-C</code></li>
+        <ul class="import-headers" style="margin-top: 8px; padding-left: 20px; line-height: 1.6;">
+            <li>student_number — e.g. <span class="field-example">08-15-41258</span></li>
+            <li>full_name — e.g. <span class="field-example">Agpoon, Cyrus</span></li>
+            <li>student_type — Must be <span class="field-example">Regular</span> or <span class="field-example">Irregular</span></li>
+            <li>program — Program code e.g. <span class="field-example">BSIT</span> or <span class="field-example">BSHM</span></li>
+            <li>year_level — e.g. <span class="field-example">4th Year</span></li>
+            <li>section — Assigned section e.g. <span class="field-example">401-C</span></li>
         </ul>
         <div class="alert alert-info" style="margin-top: 14px; font-size: 13px;">
             <strong>Note:</strong> Existing student numbers will be automatically skipped to prevent duplicate records. Unknown programs or sections will be rejected.

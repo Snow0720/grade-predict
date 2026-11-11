@@ -48,13 +48,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $eval = db()->prepare('SELECT status FROM dl_pl_evaluations WHERE student_id = ? AND semester_id = ? AND basis = "official"');
                 $eval->execute([$studentId, $semesterId]);
                 $eval = $eval->fetch();
-                $recognized = db()->prepare('SELECT id FROM recognition_cases WHERE student_id = ? AND semester_id = ? AND stage = "registrar_verified"');
+                $recognized = db()->prepare('SELECT id FROM recognition_cases WHERE student_id = ? AND semester_id = ? AND stage IN ("chair_endorsed", "registrar_verified", "approved", "final")');
                 $recognized->execute([$studentId, $semesterId]);
                 $recognized = (bool) $recognized->fetch();
 
                 $standingOk = $eval && in_array($eval['status'], ['Possible DL', 'Possible PL', 'Final Approved'], true);
                 if (!$standingOk && !$recognized) {
-                    throw new RuntimeException('Assigning DL (50%) or PL (100%) discounts requires official "Possible DL / PL" status or Registrar recognition verification.');
+                    throw new RuntimeException('Assigning DL (50%) or PL (100%) discounts requires official "Possible DL / PL" status or an endorsed recognition record.');
                 }
             }
             
@@ -109,7 +109,7 @@ foreach ($assignments as $a) {
 }
 $totalAssignments = count($assignments);
 
-layout_start('Scholarships', 'scholarships', [['label' => 'Scholarships']]);
+layout_start('Scholarship & TES Subsidy Management', 'scholarships', [['label' => 'Scholarships']]);
 ?>
 <div class="page-head">
     <div>

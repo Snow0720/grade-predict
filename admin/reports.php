@@ -15,7 +15,10 @@ if (!in_array($type, ['submissions', 'qualifiers', 'program', 'gwa', 'workflow',
 
 $program = (int) ($_GET['program'] ?? 0);
 $scope = scoped_program_ids($user);
-$programs = db()->query('SELECT id, code, name FROM programs ORDER BY code')->fetchAll();
+$programs = programs_for_user($user);
+if ($program > 0 && is_array($scope) && !in_array($program, $scope, true)) {
+    $program = 0;
+}
 
 function report_rows(string $type, int $program, ?array $scope): array
 {
@@ -63,7 +66,7 @@ function report_rows(string $type, int $program, ?array $scope): array
     } elseif (in_array($type, ['workflow', 'returned', 'verified'], true)) {
         $extra = $type === 'returned'
             ? " AND (rc.stage LIKE '%returned%' OR rc.stage IN ('chair_rejected','oic_rejected','osa_rejected','osa_deferred'))"
-            : ($type === 'verified' ? " AND rc.stage = 'registrar_verified'" : '');
+            : ($type === 'verified' ? " AND rc.stage IN ('chair_endorsed','registrar_verified','approved','final')" : '');
         $sql = "SELECT st.student_number, st.full_name, p.code AS program, rc.list_type, rc.gwa,
                        rc.stage AS workflow_status, rc.last_note, rc.required_action, rc.updated_at
                 FROM recognition_cases rc
@@ -123,7 +126,7 @@ $titles = [
     'gwa' => 'GWA and academic standing',
     'workflow' => 'Approval workflow report',
     'returned' => 'Returned, rejected, and deferred records',
-    'verified' => 'Registrar verification report',
+    'verified' => 'Recognition verification report',
     'scholarships' => 'Scholarship & grant report',
 ];
 
@@ -137,7 +140,7 @@ foreach ($rows as $r) {
     }
 }
 
-layout_start('Reports', 'reports', [['label' => 'Reports']]);
+layout_start((string) ($titles[$type] ?? 'Reports'), 'reports', [['label' => 'Reports']]);
 ?>
 <div class="page-head">
     <div>

@@ -47,16 +47,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('ok', 'Professor account status updated.');
         } elseif ($action === 'assign') {
             $professorId = (int) ($_POST['professor_id'] ?? 0);
+            $programId = (int) ($_POST['program_id'] ?? 0);
             $subjectId = (int) ($_POST['subject_id'] ?? 0);
             $sectionId = (int) ($_POST['section_id'] ?? 0);
-            $subject = db()->prepare('SELECT program_id FROM subjects WHERE id = ?');
+            $assignScope = scoped_program_ids($user);
+            if (is_array($assignScope) && !in_array($programId, $assignScope, true)) {
+                throw new RuntimeException('That program is outside your access.');
+            }
+            $subject = db()->prepare('SELECT program_id, year_level FROM subjects WHERE id = ?');
             $subject->execute([$subjectId]);
             $subject = $subject->fetch();
-            $section = db()->prepare('SELECT program_id, semester_id FROM sections WHERE id = ?');
+            $section = db()->prepare('SELECT program_id, semester_id, year_level FROM sections WHERE id = ?');
             $section->execute([$sectionId]);
             $section = $section->fetch();
-            if (!$subject || !$section || (int) $subject['program_id'] !== (int) $section['program_id']) {
-                throw new RuntimeException('The subject and section must belong to the same academic program.');
+            $yearLevel = trim((string) ($_POST['year_level'] ?? ''));
+            if (
+                !$subject
+                || !$section
+                || $programId <= 0
+                || $yearLevel === ''
+                || (int) $subject['program_id'] !== $programId
+                || (int) $section['program_id'] !== $programId
+            ) {
+                throw new RuntimeException('Choose a course and year, then a subject and section from that year.');
+            }
+            if (
+                (string) $subject['year_level'] !== $yearLevel
+                || (string) $section['year_level'] !== $yearLevel
+            ) {
+                throw new RuntimeException('The subject and section must match the selected year level.');
             }
             db()->beginTransaction();
             db()->prepare('INSERT INTO professor_assignments (professor_id, subject_id, section_id, semester_id) VALUES (?, ?, ?, ?)')
@@ -119,18 +138,31 @@ $faculty = db()->query(
     'SELECT u.id AS user_id, u.username, u.full_name, u.title, u.is_active, pr.id AS professor_id
      FROM professors pr JOIN users u ON u.id = pr.user_id ORDER BY u.full_name'
 )->fetchAll();
-$subjects = db()->query('SELECT s.id, s.code, s.name, p.code AS program_code FROM subjects s JOIN programs p ON p.id = s.program_id ORDER BY p.code, s.code')->fetchAll();
-$sections = db()->query('SELECT sec.id, sec.name, sec.year_level, p.code AS program_code FROM sections sec JOIN programs p ON p.id = sec.program_id ORDER BY p.code, sec.name')->fetchAll();
-$assignments = db()->query(
-    'SELECT pa.id, s.code, sec.name AS section_name, u.full_name, gs.status
+$scope = scoped_program_ids($user);
+$programs = programs_for_user($user);
+$subjectSql = 'SELECT s.id, s.code, s.name, s.year_level, s.program_id, p.code AS program_code
+     FROM subjects s JOIN programs p ON p.id = s.program_id';
+$sectionSql = 'SELECT sec.id, sec.name, sec.year_level, sec.program_id, p.code AS program_code
+     FROM sections sec JOIN programs p ON p.id = sec.program_id';
+$assignSql = 'SELECT pa.id, s.code, sec.name AS section_name, u.full_name, gs.status
      FROM professor_assignments pa
      JOIN subjects s ON s.id = pa.subject_id
      JOIN sections sec ON sec.id = pa.section_id
      JOIN professors pr ON pr.id = pa.professor_id
      JOIN users u ON u.id = pr.user_id
-     LEFT JOIN grade_submissions gs ON gs.assignment_id = pa.id
-     ORDER BY s.code'
-)->fetchAll();
+     LEFT JOIN grade_submissions gs ON gs.assignment_id = pa.id';
+if (is_array($scope)) {
+    $in = $scope === [] ? '0' : implode(',', array_map('intval', $scope));
+    $subjectSql .= ' WHERE s.program_id IN (' . $in . ')';
+    $sectionSql .= ' WHERE sec.program_id IN (' . $in . ')';
+    $assignSql .= ' WHERE s.program_id IN (' . $in . ')';
+}
+$subjectSql .= ' ORDER BY p.code, s.code';
+$sectionSql .= ' ORDER BY p.code, sec.year_level, sec.name';
+$assignSql .= ' ORDER BY s.code';
+$subjects = db()->query($subjectSql)->fetchAll();
+$sections = db()->query($sectionSql)->fetchAll();
+$assignments = db()->query($assignSql)->fetchAll();
 
 // Calculate Summary Metrics
 $totalFaculty = count($faculty);
@@ -140,7 +172,7 @@ foreach ($faculty as $f) {
 }
 $totalAssignments = count($assignments);
 
-layout_start('Faculty', 'faculty', [['label' => 'Faculty']]);
+layout_start('Faculty Management', 'faculty', [['label' => 'Faculty']]);
 ?>
 <div class="page-head">
     <div>
@@ -199,23 +231,53 @@ layout_start('Faculty', 'faculty', [['label' => 'Faculty']]);
             <input type="hidden" name="action" value="assign">
             
             <label for="professor_id">Assigned Professor</label>
-            <select id="professor_id" name="professor_id">
+            <select id="professor_id" name="professor_id" required>
                 <?php foreach ($faculty as $person): ?>
                     <option value="<?= (int) $person['professor_id'] ?>"><?= h(trim($person['title'] . ' ' . $person['full_name'])) ?></option>
                 <?php endforeach; ?>
             </select>
-            
-            <label for="subject_id">Subject Course</label>
-            <select id="subject_id" name="subject_id">
-                <?php foreach ($subjects as $subject): ?>
-                    <option value="<?= (int) $subject['id'] ?>"><?= h($subject['program_code'] . ' ' . $subject['code'] . ' · ' . $subject['name']) ?></option>
+
+            <label for="program_id">Course</label>
+            <select id="program_id" name="program_id" required>
+                <option value="">Select course</option>
+                <?php foreach ($programs as $program): ?>
+                    <option value="<?= (int) $program['id'] ?>"><?= h($program['code'] . ' · ' . $program['name']) ?></option>
                 <?php endforeach; ?>
             </select>
-            
-            <label for="section_id">Section Group</label>
-            <select id="section_id" name="section_id">
-                <?php foreach ($sections as $section): ?>
-                    <option value="<?= (int) $section['id'] ?>"><?= h($section['program_code'] . ' ' . $section['year_level'] . ' ' . $section['name']) ?></option>
+
+            <div class="assign-row">
+                <div>
+                    <label for="year_level">Year</label>
+                    <select id="year_level" name="year_level" required disabled>
+                        <option value="">Select course first</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="section_id">Section</label>
+                    <select id="section_id" name="section_id" required disabled>
+                        <option value="">Select subject first</option>
+                        <?php foreach ($sections as $section): ?>
+                            <option
+                                value="<?= (int) $section['id'] ?>"
+                                data-program="<?= (int) $section['program_id'] ?>"
+                                data-year="<?= h((string) $section['year_level']) ?>"
+                                hidden disabled
+                            ><?= h((string) $section['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <label for="subject_id">Subject</label>
+            <select id="subject_id" name="subject_id" required disabled>
+                <option value="">Select year first</option>
+                <?php foreach ($subjects as $subject): ?>
+                    <option
+                        value="<?= (int) $subject['id'] ?>"
+                        data-program="<?= (int) $subject['program_id'] ?>"
+                        data-year="<?= h((string) $subject['year_level']) ?>"
+                        hidden disabled
+                    ><?= h(subject_label('', (string) $subject['code'], (string) $subject['name'])) ?></option>
                 <?php endforeach; ?>
             </select>
             
@@ -225,6 +287,122 @@ layout_start('Faculty', 'faculty', [['label' => 'Faculty']]);
         </form>
     </article>
 </section>
+<script>
+(function () {
+    var program = document.getElementById('program_id');
+    var year = document.getElementById('year_level');
+    var subject = document.getElementById('subject_id');
+    var section = document.getElementById('section_id');
+    if (!program || !year || !subject || !section) return;
+
+    var subjectOptions = Array.prototype.slice.call(subject.querySelectorAll('option[data-program]'));
+    var sectionOptions = Array.prototype.slice.call(section.querySelectorAll('option[data-program]'));
+    var yearOrder = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+
+    function setEnabled(select, on, placeholderText) {
+        select.disabled = !on;
+        if (placeholderText) select.options[0].textContent = placeholderText;
+    }
+
+    function yearsForCourse(pid) {
+        var found = {};
+        subjectOptions.forEach(function (opt) {
+            if (opt.getAttribute('data-program') === pid) {
+                found[opt.getAttribute('data-year')] = true;
+            }
+        });
+        sectionOptions.forEach(function (opt) {
+            if (opt.getAttribute('data-program') === pid) {
+                found[opt.getAttribute('data-year')] = true;
+            }
+        });
+        var list = Object.keys(found).filter(Boolean);
+        list.sort(function (a, b) {
+            var ia = yearOrder.indexOf(a);
+            var ib = yearOrder.indexOf(b);
+            if (ia === -1 && ib === -1) return a.localeCompare(b);
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+        });
+        return list;
+    }
+
+    function syncYears() {
+        var pid = program.value;
+        var previous = year.value;
+        while (year.options.length > 1) year.remove(1);
+        if (!pid) {
+            year.value = '';
+            setEnabled(year, false, 'Select course first');
+            syncSubjects();
+            return;
+        }
+        var years = yearsForCourse(pid);
+        years.forEach(function (label) {
+            var opt = document.createElement('option');
+            opt.value = label;
+            opt.textContent = label;
+            year.appendChild(opt);
+        });
+        setEnabled(year, true, years.length ? 'Select year' : 'No year levels for this course');
+        year.value = years.indexOf(previous) !== -1 ? previous : (years[0] || '');
+        syncSubjects();
+    }
+
+    function syncSubjects() {
+        var pid = program.value;
+        var y = year.value;
+        var first = null;
+        subjectOptions.forEach(function (opt) {
+            var show = pid !== '' && y !== ''
+                && opt.getAttribute('data-program') === pid
+                && opt.getAttribute('data-year') === y;
+            opt.hidden = !show;
+            opt.disabled = !show;
+            if (show && !first) first = opt;
+        });
+        if (!pid || !y) {
+            subject.value = '';
+            setEnabled(subject, false, !pid ? 'Select course first' : 'Select year first');
+        } else {
+            setEnabled(subject, true, first ? 'Select subject' : 'No subjects for this year');
+            if (!subject.value || subject.selectedOptions[0].disabled) {
+                subject.value = first ? first.value : '';
+            }
+        }
+        syncSections();
+    }
+
+    function syncSections() {
+        var pid = program.value;
+        var y = year.value;
+        var first = null;
+        sectionOptions.forEach(function (opt) {
+            var show = pid !== '' && y !== ''
+                && opt.getAttribute('data-program') === pid
+                && opt.getAttribute('data-year') === y;
+            opt.hidden = !show;
+            opt.disabled = !show;
+            if (show && !first) first = opt;
+        });
+        if (!pid || !y || !subject.value) {
+            section.value = '';
+            setEnabled(section, false, !subject.value ? 'Select subject first' : 'Select year first');
+            return;
+        }
+        setEnabled(section, true, first ? 'Select section' : 'No sections for this year');
+        if (!section.value || section.selectedOptions[0].disabled) {
+            section.value = first ? first.value : '';
+        }
+    }
+
+    program.addEventListener('change', syncYears);
+    year.addEventListener('change', syncSubjects);
+    subject.addEventListener('change', syncSections);
+    syncYears();
+})();
+</script>
 
 <!-- Accounts List -->
 <section class="card" style="margin-top: 18px;">

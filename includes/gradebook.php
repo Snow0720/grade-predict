@@ -3,7 +3,135 @@ declare(strict_types=1);
 
 function load_scale(): array
 {
-    return default_scale_rows();
+    static $rows = null;
+    if ($rows !== null) {
+        return $rows;
+    }
+    try {
+        $fetched = db()->query(
+            'SELECT id, min_percent, max_percent, equivalent, description, sort_order
+             FROM grading_scale
+             ORDER BY sort_order ASC, min_percent DESC'
+        )->fetchAll();
+        if ($fetched !== []) {
+            return $rows = $fetched;
+        }
+    } catch (Throwable $e) {
+        // Fall back to built-in scale if the table is missing.
+    }
+    return $rows = default_scale_rows();
+}
+
+function scale_range_label(array $band): string
+{
+    $min = (float) ($band['min_percent'] ?? 0);
+    $max = (float) ($band['max_percent'] ?? 0);
+    if ($min <= 0) {
+        return 'Below ' . (string) ((int) floor($max + 0.01)) . '%';
+    }
+    $minShow = (int) round($min);
+    $maxShow = abs($max - 100) < 0.001 ? 100 : (int) floor($max);
+    return $minShow . ' – ' . $maxShow . '%';
+}
+
+function scale_remark_key(string $description): string
+{
+    $desc = strtolower(trim($description));
+    if (str_contains($desc, 'fail')) {
+        return 'FAILED';
+    }
+    if (str_contains($desc, 'pass') || str_contains($desc, 'fair')) {
+        return 'INC';
+    }
+    if (str_contains($desc, 'excellent') || str_contains($desc, 'very superior')) {
+        return 'PASSED';
+    }
+    if (str_contains($desc, 'good') || str_contains($desc, 'satisfactory')) {
+        return 'Regular';
+    }
+    return 'assigned';
+}
+
+function save_grading_scale(array $user, array $rows): int
+{
+    if (($user['portal'] ?? '') !== 'admin' || !array_intersect($user['roles'], office_roles())) {
+        throw new RuntimeException('Only college offices can edit the grade equivalent scale.', 403);
+    }
+    if ($rows === []) {
+        throw new RuntimeException('Add at least one scale row.', 422);
+    }
+
+    $normalized = [];
+    foreach ($rows as $index => $row) {
+        $minRaw = trim((string) ($row['min_percent'] ?? ''));
+        $maxRaw = trim((string) ($row['max_percent'] ?? ''));
+        $eqvRaw = trim((string) ($row['equivalent'] ?? ''));
+        $desc = trim((string) ($row['description'] ?? ''));
+        if ($minRaw === '' && $maxRaw === '' && $eqvRaw === '' && $desc === '') {
+            continue;
+        }
+        if (!is_numeric($minRaw) || !is_numeric($maxRaw) || !is_numeric($eqvRaw)) {
+            throw new RuntimeException('Every scale row needs numeric min %, max %, and grade point.', 422);
+        }
+        if ($desc === '') {
+            throw new RuntimeException('Every scale row needs a remark / description.', 422);
+        }
+        $min = round((float) $minRaw, 2);
+        $max = round((float) $maxRaw, 2);
+        $eqv = round((float) $eqvRaw, 2);
+        if ($min < 0 || $max > 100 || $min > $max) {
+            throw new RuntimeException('Percentage ranges must stay within 0–100 and min cannot exceed max.', 422);
+        }
+        if ($eqv < 1 || $eqv > 5) {
+            throw new RuntimeException('Grade points must be between 1.00 and 5.00.', 422);
+        }
+        $normalized[] = [
+            'min_percent' => $min,
+            'max_percent' => $max,
+            'equivalent' => $eqv,
+            'description' => $desc,
+            'sort_order' => $index + 1,
+        ];
+    }
+    if ($normalized === []) {
+        throw new RuntimeException('Add at least one scale row.', 422);
+    }
+
+    usort($normalized, static fn(array $a, array $b): int => $b['min_percent'] <=> $a['min_percent']);
+    for ($i = 0; $i < count($normalized); $i++) {
+        for ($j = $i + 1; $j < count($normalized); $j++) {
+            $a = $normalized[$i];
+            $b = $normalized[$j];
+            if ($a['min_percent'] <= $b['max_percent'] && $b['min_percent'] <= $a['max_percent']) {
+                throw new RuntimeException('Percentage ranges cannot overlap.', 422);
+            }
+        }
+    }
+
+    db()->beginTransaction();
+    try {
+        db()->exec('DELETE FROM grading_scale');
+        $stmt = db()->prepare(
+            'INSERT INTO grading_scale (min_percent, max_percent, equivalent, description, sort_order)
+             VALUES (?, ?, ?, ?, ?)'
+        );
+        foreach ($normalized as $i => $row) {
+            $stmt->execute([
+                $row['min_percent'],
+                $row['max_percent'],
+                $row['equivalent'],
+                $row['description'],
+                $i + 1,
+            ]);
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        throw $e;
+    }
+
+    audit((int) $user['id'], 'scale_update', 'grading_scale', null, count($normalized) . ' bands saved');
+    return count($normalized);
 }
 
 function load_rules(?int $semesterId = null): array
@@ -147,6 +275,87 @@ function ensure_submitted_periods_column(): void
     }
     db()->exec("ALTER TABLE grade_submissions ADD COLUMN submitted_periods VARCHAR(64) NOT NULL DEFAULT '' AFTER status");
     db()->exec("UPDATE grade_submissions SET submitted_periods = 'prelim,midterm,finals' WHERE status NOT IN ('draft', 'returned') AND submitted_periods = ''");
+}
+
+function ensure_percent_override_columns(): void
+{
+    static $ready = false;
+    if ($ready) {
+        return;
+    }
+    $ready = true;
+    $columns = [
+        'prelim_percent_override' => 'DECIMAL(5,2) DEFAULT NULL',
+        'midterm_percent_override' => 'DECIMAL(5,2) DEFAULT NULL',
+        'finals_percent_override' => 'DECIMAL(5,2) DEFAULT NULL',
+        'final_percent_override' => 'DECIMAL(5,2) DEFAULT NULL',
+    ];
+    foreach ($columns as $name => $definition) {
+        $exists = db()->query("SHOW COLUMNS FROM enrollments LIKE " . db()->quote($name))->fetch();
+        if ($exists) {
+            continue;
+        }
+        db()->exec("ALTER TABLE enrollments ADD COLUMN {$name} {$definition}");
+    }
+}
+
+function normalize_percent_override(mixed $value): ?float
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    if (!is_numeric($value)) {
+        throw new RuntimeException('Enter a valid percent from 0 to 100.', 422);
+    }
+    $percent = round((float) $value, 2);
+    if ($percent < 0 || $percent > 100) {
+        throw new RuntimeException('Percent must be from 0 to 100.', 422);
+    }
+    return $percent;
+}
+
+function save_percent_overrides(array $user, int $assignmentId, array $rows): int
+{
+    ensure_percent_override_columns();
+    if (($user['portal'] ?? '') !== 'admin' || !array_intersect($user['roles'], office_roles())) {
+        throw new RuntimeException('Only college offices can edit grade percents.', 403);
+    }
+    $assignment = fetch_assignment($assignmentId);
+    if (!$assignment || !user_can_view_assignment($assignment, $user)) {
+        throw new RuntimeException('This class is outside your office scope.', 403);
+    }
+    if (assignment_is_finalized($assignment)) {
+        throw new RuntimeException('Finalized grades are locked.', 403);
+    }
+
+    $updated = 0;
+    $stmt = db()->prepare(
+        'UPDATE enrollments
+         SET prelim_percent_override = ?, midterm_percent_override = ?, finals_percent_override = ?, final_percent_override = ?
+         WHERE id = ? AND assignment_id = ?'
+    );
+    foreach ($rows as $row) {
+        $enrollmentId = (int) ($row['enrollment_id'] ?? 0);
+        if ($enrollmentId <= 0) {
+            continue;
+        }
+        $prelim = normalize_percent_override($row['prelim'] ?? null);
+        $midterm = normalize_percent_override($row['midterm'] ?? null);
+        $finals = normalize_percent_override($row['finals'] ?? null);
+        $final = normalize_percent_override($row['final'] ?? null);
+        $stmt->execute([$prelim, $midterm, $finals, $final, $enrollmentId, $assignmentId]);
+        if ($stmt->rowCount() > 0) {
+            $updated++;
+        }
+    }
+    audit(
+        (int) $user['id'],
+        'percent_override',
+        'professor_assignment',
+        (string) $assignmentId,
+        'Updated office grade percents for ' . $updated . ' student(s)'
+    );
+    return $updated;
 }
 
 function submitted_period_keys(array $assignment): array
@@ -326,11 +535,7 @@ function user_can_view_assignment(array $assignment, array $user): bool
     if (($user['portal'] ?? '') !== 'admin') {
         return false;
     }
-    if (in_array('program_chair', $user['roles'], true)) {
-        return in_array((int) $assignment['program_id'], chair_program_ids($user), true)
-            || (bool) array_intersect($user['roles'], ['college_oic', 'osa', 'registrar', 'system_admin']);
-    }
-    return (bool) array_intersect($user['roles'], ['college_oic', 'osa', 'registrar', 'system_admin', 'program_chair']);
+    return (bool) array_intersect($user['roles'], office_roles());
 }
 
 function build_gradebook(int $assignmentId): array
@@ -376,9 +581,12 @@ function build_gradebook(int $assignmentId): array
         $items[$row['period']][$row['category']][] = $row;
     }
 
+    ensure_percent_override_columns();
+    ensure_student_auth_columns();
     $studentsStmt = db()->prepare(
         'SELECT e.id AS enrollment_id, st.id AS student_id, st.student_number, st.full_name, st.student_type, st.is_demo,
-                p.code AS program_code, st.year_level
+                p.code AS program_code, st.year_level, e.grades_visible,
+                e.prelim_percent_override, e.midterm_percent_override, e.finals_percent_override, e.final_percent_override
          FROM enrollments e
          JOIN students st ON st.id = e.student_id
          JOIN programs p ON p.id = st.program_id
@@ -476,18 +684,51 @@ function assemble_student(
         }
         $adjustment = (float) ($adjustments[$period] ?? 0);
         $result = weighted_percent($parts, $weights[$period] ?? [], $adjustment);
-        $equivalent = lookup_equivalent($result['percent'], $scale);
+        $filledScores = 0;
+        $blankScores = 0;
+        foreach ($categories as $category => $data) {
+            if ((float) ($weights[$period][$category] ?? 0) <= 0 && ($data['items'] ?? []) === []) {
+                continue;
+            }
+            foreach ($data['items'] as $item) {
+                if (!array_key_exists('score', $item) || $item['score'] === null || $item['score'] === '') {
+                    $blankScores++;
+                    continue;
+                }
+                $filledScores++;
+            }
+        }
+        $started = $filledScores > 0;
+        $slotsComplete = $filledScores > 0 && $blankScores === 0;
+        $complete = $result['complete'] && $slotsComplete;
+        $equivalent = lookup_equivalent($complete ? $result['percent'] : null, $scale);
         $periods[$period] = [
             'categories' => $categories,
             'adjustment' => $adjustment,
             'percent' => $result['percent'],
             'base' => $result['base'],
             'equivalent' => $equivalent,
-            'complete' => $result['complete'],
+            'complete' => $complete,
+            'started' => $started,
             'missing' => $result['missing'],
             'weight_total' => $result['weight_total'],
-            'remarks' => grade_remarks($equivalent, $result['complete']),
+            'remarks' => grade_remarks($equivalent, $complete, $started),
         ];
+    }
+
+    foreach (array_keys(PERIODS) as $period) {
+        $overrideKey = $period . '_percent_override';
+        $periods[$period]['computed_percent'] = $periods[$period]['percent'];
+        $periods[$period]['computed_equivalent'] = $periods[$period]['equivalent'];
+        $periods[$period]['percent_overridden'] = false;
+        if (($student[$overrideKey] ?? null) !== null && $student[$overrideKey] !== '') {
+            $overridePercent = round((float) $student[$overrideKey], 2);
+            $periods[$period]['percent'] = $overridePercent;
+            $periods[$period]['equivalent'] = lookup_equivalent($overridePercent, $scale);
+            $periods[$period]['percent_overridden'] = true;
+            $periods[$period]['complete'] = true;
+            $periods[$period]['remarks'] = grade_remarks($periods[$period]['equivalent'], true);
+        }
     }
 
     $periodParts = [];
@@ -495,7 +736,14 @@ function assemble_student(
         $periodParts[$key] = $period['percent'];
     }
     $final = weighted_percent($periodParts, $periodWeights, 0);
-    $finalEqv = lookup_equivalent($final['percent'], $scale);
+    $computedFinalPercent = $final['percent'];
+    $finalPercent = $computedFinalPercent;
+    $finalOverridden = false;
+    if ($student['final_percent_override'] !== null && $student['final_percent_override'] !== '') {
+        $finalPercent = round((float) $student['final_percent_override'], 2);
+        $finalOverridden = true;
+    }
+    $finalEqv = lookup_equivalent($finalPercent, $scale);
 
     $featureAverages = [];
     foreach (['attendance', 'recitation', 'activities', 'quizzes', 'project', 'exam'] as $feature) {
@@ -516,6 +764,23 @@ function assemble_student(
         }
     }
 
+    $finalStarted = false;
+    $periodsReady = 0;
+    $periodsExpected = 0;
+    foreach ($periods as $key => $period) {
+        if ((float) ($periodWeights[$key] ?? 0) <= 0) {
+            continue;
+        }
+        $periodsExpected++;
+        if (!empty($period['started'])) {
+            $finalStarted = true;
+        }
+        if (!empty($period['complete'])) {
+            $periodsReady++;
+        }
+    }
+    $finalComplete = $finalOverridden || ($periodsExpected > 0 && $periodsReady === $periodsExpected && $final['complete']);
+
     return [
         'number' => $number,
         'enrollment_id' => (int) $student['enrollment_id'],
@@ -526,15 +791,26 @@ function assemble_student(
         'is_demo' => (int) ($student['is_demo'] ?? 0),
         'program_code' => $student['program_code'],
         'year_level' => $student['year_level'],
+        'grades_visible' => (int) ($student['grades_visible'] ?? 0) === 1,
         'periods' => $periods,
-        'final_percent' => $final['percent'],
+        'final_percent' => $finalPercent,
+        'computed_final_percent' => $computedFinalPercent,
         'final_equivalent' => $finalEqv,
-        'final_complete' => $final['complete'],
-        'final_missing' => $final['missing'],
-        'remarks' => grade_remarks($finalEqv, $final['complete']),
+        'final_percent_overridden' => $finalOverridden,
+        'final_complete' => $finalComplete,
+        'final_missing' => $finalOverridden ? [] : $final['missing'],
+        'remarks' => $finalOverridden
+            ? grade_remarks($finalEqv, true, true)
+            : grade_remarks($finalComplete ? $finalEqv : null, $finalComplete, $finalStarted),
         'features' => $featureAverages,
         'predicted_percent' => $predictedPercent,
         'predicted_equivalent' => $predictedEqv,
+        'percent_overrides' => [
+            'prelim' => $student['prelim_percent_override'] !== null && $student['prelim_percent_override'] !== '' ? (float) $student['prelim_percent_override'] : null,
+            'midterm' => $student['midterm_percent_override'] !== null && $student['midterm_percent_override'] !== '' ? (float) $student['midterm_percent_override'] : null,
+            'finals' => $student['finals_percent_override'] !== null && $student['finals_percent_override'] !== '' ? (float) $student['finals_percent_override'] : null,
+            'final' => $student['final_percent_override'] !== null && $student['final_percent_override'] !== '' ? (float) $student['final_percent_override'] : null,
+        ],
     ];
 }
 
@@ -571,6 +847,9 @@ function student_payload(array $student): array
 
 function find_student_row(array $book, int $enrollmentId): ?array
 {
+    if (empty($book['students'])) {
+        return null;
+    }
     foreach ($book['students'] as $student) {
         if ((int) $student['enrollment_id'] === $enrollmentId) {
             return $student;
@@ -752,12 +1031,13 @@ function save_one_score(array $user, array $post): array
         $mark = $choice === '' ? null : $choice;
         $score = attendance_score($choice, (float) $component['max_score']);
     } elseif ($raw !== '') {
-        if (!is_numeric($raw)) {
-            throw new RuntimeException('Enter a number, or leave the cell blank.', 422);
+        if (!preg_match('/^\d+$/', $raw)) {
+            throw new RuntimeException('Enter a whole number, or leave the cell blank.', 422);
         }
-        $score = round((float) $raw, 2);
-        if ($score < 0 || $score > (float) $component['max_score']) {
-            throw new RuntimeException('The score must be from 0 to ' . $component['max_score'] . '.', 422);
+        $score = (float) (int) $raw;
+        $max = (float) $component['max_score'];
+        if ($score < 0 || $score > $max) {
+            throw new RuntimeException('The score must be from 0 to ' . rtrim(rtrim(number_format($max, 2, '.', ''), '0'), '.') . '.', 422);
         }
     }
     $pdo->prepare(
@@ -769,5 +1049,399 @@ function save_one_score(array $user, array $post): array
     return [
         'assignment_id' => (int) $enroll['assignment_id'],
         'enrollment_id' => $enrollmentId,
+    ];
+}
+
+function student_subject_risk_explanation(string $subject, string $status, ?float $finalEqv, array $periods, float $disqualifyLine): string
+{
+    $subject = trim($subject) !== '' ? trim($subject) : 'this subject';
+    $join = static function (array $items): string {
+        $items = array_values(array_filter($items, static fn($item) => $item !== ''));
+        if ($items === []) {
+            return '';
+        }
+        if (count($items) === 1) {
+            return $items[0];
+        }
+        $last = array_pop($items);
+        return implode(', ', $items) . ' and ' . $last;
+    };
+    $areas = [
+        'quizzes' => ['noun' => 'quizzes', 'advice' => 'reviewing lessons'],
+        'exam' => ['noun' => 'examinations', 'advice' => 'improving examination performance'],
+        'activities' => ['noun' => 'activities', 'advice' => 'completing activities'],
+        'project' => ['noun' => 'the project', 'advice' => 'completing the project'],
+        'recitation' => ['noun' => 'recitation', 'advice' => 'participating in recitation'],
+        'attendance' => ['noun' => 'attendance', 'advice' => 'attending classes regularly'],
+    ];
+    $weak = [];
+    $strong = [];
+    foreach ($periods as $period) {
+        foreach ($areas as $key => $meta) {
+            $category = $period['categories'][$key] ?? null;
+            if (!is_array($category) || (float) ($category['weight'] ?? 0) <= 0) {
+                continue;
+            }
+            $equivalent = $category['equivalent'] ?? null;
+            if ($equivalent === null || $equivalent === '') {
+                continue;
+            }
+            if ((float) $equivalent >= $disqualifyLine) {
+                $weak[$key] = $meta;
+            } elseif (!isset($weak[$key])) {
+                $strong[$key] = $meta;
+            }
+        }
+    }
+    foreach (array_keys($weak) as $key) {
+        unset($strong[$key]);
+    }
+
+    if ($status === 'Pending') {
+        return 'The student is not yet classified as At Risk or Not at Risk in ' . $subject . ' because the recorded results are still incomplete. The standing will be updated once the remaining scores are encoded.';
+    }
+
+    if ($status === 'At risk') {
+        if ($finalEqv !== null && $finalEqv > 3.0) {
+            $because = 'a failing result in this subject';
+            $advice = ['reviewing lessons', 'completing activities', 'improving examination performance'];
+        } elseif ($weak !== []) {
+            $because = 'low performance in ' . $join(array_column($weak, 'noun'));
+            $advice = array_column($weak, 'advice');
+        } else {
+            $because = 'the recorded results not meeting the required standing';
+            $advice = ['reviewing lessons', 'completing activities', 'improving examination performance'];
+        }
+        return 'The student is currently classified as At Risk in ' . $subject
+            . ' due to ' . $because . '. '
+            . 'The student\'s current academic standing indicates a need for improvement to meet the required grade. '
+            . 'It is recommended that the student focus on ' . $join($advice) . '.';
+    }
+
+    $because = $strong !== []
+        ? 'the recorded results in ' . $join(array_column($strong, 'noun')) . ' meet the required standing'
+        : 'the recorded results meet the required standing';
+    return 'The student is currently classified as Not at Risk in ' . $subject
+        . ' because ' . $because . '. '
+        . 'The student\'s current academic standing qualifies for honor standing. '
+        . 'The student should continue reviewing lessons and completing requirements to keep this result.';
+}
+
+function student_plain_risk(string $label): string
+{
+    $text = strtolower($label);
+    if (str_contains($text, 'not at risk') || str_contains($text, 'good standing') || str_contains($text, 'safe') || str_contains($text, 'on track')) {
+        return 'Not at risk';
+    }
+    if (str_contains($text, 'at risk') || str_contains($text, 'disqual') || str_contains($text, 'fail')) {
+        return 'At risk';
+    }
+    if (str_contains($text, 'no enrollment')) {
+        return 'No enrollments';
+    }
+    return 'Pending';
+}
+
+function set_class_grade_visibility(int $assignmentId, string $mode, array $visibleIds): int
+{
+    ensure_student_auth_columns();
+    $rows = db()->prepare('SELECT id FROM enrollments WHERE assignment_id = ?');
+    $rows->execute([$assignmentId]);
+    $ids = array_map('intval', $rows->fetchAll(PDO::FETCH_COLUMN));
+    if ($ids === []) {
+        return 0;
+    }
+    $allowed = array_values(array_intersect(array_map('intval', $visibleIds), $ids));
+    $shown = match ($mode) {
+        'all' => $ids,
+        'none' => [],
+        default => $allowed,
+    };
+    $update = db()->prepare('UPDATE enrollments SET grades_visible = ? WHERE id = ? AND assignment_id = ?');
+    foreach ($ids as $enrollmentId) {
+        $update->execute([in_array($enrollmentId, $shown, true) ? 1 : 0, $enrollmentId, $assignmentId]);
+    }
+    return count($shown);
+}
+
+function toggle_student_grade_visibility(int $assignmentId, int $enrollmentId): bool
+{
+    ensure_student_auth_columns();
+    $stmt = db()->prepare('SELECT grades_visible FROM enrollments WHERE id = ? AND assignment_id = ?');
+    $stmt->execute([$enrollmentId, $assignmentId]);
+    $current = $stmt->fetchColumn();
+    if ($current === false) {
+        throw new RuntimeException('That student is not in this class.');
+    }
+    $visible = (int) $current === 1 ? 0 : 1;
+    db()->prepare('UPDATE enrollments SET grades_visible = ? WHERE id = ? AND assignment_id = ?')
+        ->execute([$visible, $enrollmentId, $assignmentId]);
+    return $visible === 1;
+}
+
+function student_grades_summary(int $studentId, ?int $semesterId = null): array
+{
+    ensure_student_auth_columns();
+    $rules = load_rules($semesterId);
+    $disqualifyLine = (float) ($rules['disqualify_at'] ?? 2.0);
+    $dlMax = (float) ($rules['dl_max'] ?? 1.75);
+
+    $sql = 'SELECT e.id AS enrollment_id, pa.id AS assignment_id, pa.semester_id,
+                   s.id AS subject_id, s.code AS subject_code, s.name AS subject_name,
+                   sec.name AS section_name, sec.year_level,
+                   u.full_name AS professor_name, u.title AS professor_title,
+                   gs.status AS submission_status,
+                   og.final_percent AS official_percent,
+                   og.final_eqv AS official_eqv,
+                   og.remarks AS official_remarks,
+                   sem.name AS semester_name,
+                   e.grades_visible
+            FROM enrollments e
+            JOIN professor_assignments pa ON pa.id = e.assignment_id
+            JOIN subjects s ON s.id = pa.subject_id
+            JOIN sections sec ON sec.id = pa.section_id
+            JOIN professors pr ON pr.id = pa.professor_id
+            JOIN users u ON u.id = pr.user_id
+            JOIN semesters sem ON sem.id = pa.semester_id
+            LEFT JOIN grade_submissions gs ON gs.assignment_id = pa.id
+            LEFT JOIN official_grades og ON og.enrollment_id = e.id
+            WHERE e.student_id = ?';
+    $params = [$studentId];
+    if ($semesterId !== null && $semesterId > 0) {
+        $sql .= ' AND pa.semester_id = ?';
+        $params[] = $semesterId;
+    }
+    $sql .= ' ORDER BY s.code ASC';
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    $enrollments = $stmt->fetchAll();
+
+    $classes = [];
+    $equivalentsForGwa = [];
+    $atRiskSubjects = [];
+    $failingSubjects = [];
+    $passedCount = 0;
+    $failedCount = 0;
+    $inProgressCount = 0;
+    $releasedCount = 0;
+
+    foreach ($enrollments as $enr) {
+        $enrollmentId = (int) $enr['enrollment_id'];
+        $assignmentId = (int) $enr['assignment_id'];
+
+        $isOfficial = $enr['official_eqv'] !== null;
+        $finalPercent = null;
+        $finalEqv = null;
+        $remarks = '';
+        $periods = [];
+
+        if ($isOfficial) {
+            $finalPercent = $enr['official_percent'] !== null ? (float) $enr['official_percent'] : null;
+            $finalEqv = (float) $enr['official_eqv'];
+            $remarks = (string) $enr['official_remarks'];
+        }
+
+        try {
+            $book = build_gradebook($assignmentId);
+            $sRow = find_student_row($book, $enrollmentId);
+            if ($sRow) {
+                $periods = $sRow['periods'] ?? [];
+                if (!$isOfficial) {
+                    $finalPercent = $sRow['final_percent'] !== null ? (float) $sRow['final_percent'] : null;
+                    $finalEqv = $sRow['final_equivalent'] !== null ? (float) $sRow['final_equivalent'] : null;
+                    $remarks = (string) ($sRow['remarks'] ?? '');
+                }
+            }
+        } catch (Throwable $e) {
+            error_log('student_grades_summary: ' . $e->getMessage());
+        }
+
+        // Passing status
+        $passingStatus = 'In Progress';
+        $passingBadge = 'info';
+        if ($finalEqv !== null) {
+            if ($finalEqv <= 3.0) {
+                $passingStatus = 'PASSED';
+                $passingBadge = 'ok';
+                $passedCount++;
+            } else {
+                $passingStatus = 'FAILED';
+                $passingBadge = 'bad';
+                $failedCount++;
+                $failingSubjects[] = $enr['subject_code'];
+            }
+        } else {
+            $hasFailPeriod = false;
+            $hasAnyScores = false;
+            foreach ($periods as $pKey => $pData) {
+                if (!empty($pData['started'])) {
+                    $hasAnyScores = true;
+                }
+                if (($pData['equivalent'] !== null && (float) $pData['equivalent'] > 3.0) || ($pData['remarks'] ?? '') === 'FAILED') {
+                    $hasFailPeriod = true;
+                }
+            }
+            if ($hasFailPeriod) {
+                $passingStatus = 'Failing (At Risk)';
+                $passingBadge = 'bad';
+                $failingSubjects[] = $enr['subject_code'];
+            } elseif ($hasAnyScores) {
+                $passingStatus = 'In Progress (Passing)';
+                $passingBadge = 'info';
+                $inProgressCount++;
+            } else {
+                $passingStatus = 'Pending';
+                $passingBadge = 'muted';
+                $inProgressCount++;
+            }
+        }
+
+        // Honor risk per subject
+        $subjectHonorRisk = 'Pending';
+        $subjectHonorBadge = 'muted';
+        $subjectHonorNote = '';
+
+        if ($finalEqv !== null) {
+            $equivalentsForGwa[] = $finalEqv;
+            if ($finalEqv > 3.0) {
+                $subjectHonorRisk = 'Disqualified (Failed)';
+                $subjectHonorBadge = 'bad';
+                $subjectHonorNote = 'Failing grade disqualifies from honor standing.';
+                $atRiskSubjects[] = [
+                    'code' => $enr['subject_code'],
+                    'grade' => number_format($finalEqv, 2),
+                    'reason' => 'Subject ' . $enr['subject_code'] . ' has a failing grade (' . number_format($finalEqv, 2) . ').',
+                ];
+            } elseif ($finalEqv >= $disqualifyLine) {
+                $subjectHonorRisk = 'At Risk (Grade >= ' . number_format($disqualifyLine, 2) . ')';
+                $subjectHonorBadge = 'warn';
+                $subjectHonorNote = 'Grade of ' . number_format($finalEqv, 2) . ' meets or exceeds the ' . number_format($disqualifyLine, 2) . ' disqualification line.';
+                $atRiskSubjects[] = [
+                    'code' => $enr['subject_code'],
+                    'grade' => number_format($finalEqv, 2),
+                    'reason' => 'Subject ' . $enr['subject_code'] . ' has a grade of ' . number_format($finalEqv, 2) . ' (meets or exceeds the ' . number_format($disqualifyLine, 2) . ' disqualification threshold).',
+                ];
+            } else {
+                $subjectHonorRisk = 'Safe (< ' . number_format($disqualifyLine, 2) . ')';
+                $subjectHonorBadge = 'ok';
+                $subjectHonorNote = 'Meets honor criteria.';
+            }
+        } else {
+            $periodRisk = false;
+            foreach ($periods as $pName => $pData) {
+                if ($pData['equivalent'] !== null && (float) $pData['equivalent'] >= $disqualifyLine) {
+                    $periodRisk = true;
+                    $atRiskSubjects[] = [
+                        'code' => $enr['subject_code'],
+                        'grade' => number_format((float) $pData['equivalent'], 2) . ' (' . ucfirst($pName) . ')',
+                        'reason' => 'Subject ' . $enr['subject_code'] . ' ' . ucfirst($pName) . ' period grade (' . number_format((float) $pData['equivalent'], 2) . ') is >= ' . number_format($disqualifyLine, 2) . '.',
+                    ];
+                    break;
+                }
+            }
+            $recordedPeriod = false;
+            foreach ($periods as $pData) {
+                if (($pData['equivalent'] ?? null) !== null && $pData['equivalent'] !== '') {
+                    $recordedPeriod = true;
+                    break;
+                }
+            }
+            if (!$recordedPeriod) {
+                $subjectHonorRisk = 'Pending';
+                $subjectHonorBadge = 'info';
+                $subjectHonorNote = '';
+            } elseif ($periodRisk) {
+                $subjectHonorRisk = 'At Risk (Period Grade >= ' . number_format($disqualifyLine, 2) . ')';
+                $subjectHonorBadge = 'warn';
+                $subjectHonorNote = 'A period grade is currently >= ' . number_format($disqualifyLine, 2) . '.';
+            } else {
+                $subjectHonorRisk = 'Safe / On Track';
+                $subjectHonorBadge = 'info';
+                $subjectHonorNote = 'On track, pending final grade.';
+            }
+        }
+
+        $subjectHonorNote = student_subject_risk_explanation(
+            (string) $enr['subject_name'],
+            student_plain_risk($subjectHonorRisk),
+            $finalEqv !== null ? (float) $finalEqv : null,
+            $periods,
+            $disqualifyLine
+        );
+
+        $gradesVisible = (int) ($enr['grades_visible'] ?? 0) === 1;
+        if ($gradesVisible) {
+            $releasedCount++;
+        }
+
+        $classes[] = [
+            'assignment_id' => $assignmentId,
+            'enrollment_id' => $enrollmentId,
+            'grades_visible' => $gradesVisible,
+            'subject_code' => $enr['subject_code'],
+            'subject_name' => $enr['subject_name'],
+            'section_name' => $enr['section_name'],
+            'professor_name' => trim(($enr['professor_title'] ?? '') . ' ' . ($enr['professor_name'] ?? '')),
+            'semester_name' => $enr['semester_name'],
+            'is_official' => $isOfficial,
+            'submission_status' => $enr['submission_status'] ?? 'draft',
+            'periods' => $gradesVisible ? $periods : [],
+            'final_percent' => $gradesVisible ? $finalPercent : null,
+            'final_equivalent' => $gradesVisible ? $finalEqv : null,
+            'remarks' => $gradesVisible ? $remarks : '',
+            'passing_status' => $gradesVisible ? $passingStatus : 'Hidden',
+            'passing_badge' => $gradesVisible ? $passingBadge : 'muted',
+            'honor_risk' => student_plain_risk($subjectHonorRisk),
+            'honor_badge' => $subjectHonorBadge,
+            'honor_note' => $subjectHonorNote,
+        ];
+    }
+
+    $calculatedGwa = gwa_of($equivalentsForGwa);
+    $riskReasons = [];
+    $overallStanding = 'Pending';
+    $overallBadge = 'muted';
+
+    if ($classes === []) {
+        $overallStanding = 'No Enrollments';
+        $overallBadge = 'muted';
+    } elseif ($atRiskSubjects !== [] || $failingSubjects !== []) {
+        $overallStanding = 'At Risk';
+        $overallBadge = 'warn';
+        foreach ($atRiskSubjects as $ars) {
+            $riskReasons[] = $ars['reason'];
+        }
+    } elseif ($calculatedGwa !== null && $calculatedGwa > $dlMax) {
+        $overallStanding = 'At Risk';
+        $overallBadge = 'warn';
+        $riskReasons[] = 'Current estimated GWA (' . number_format($calculatedGwa, 2) . ') is outside the college honor standing threshold (<= ' . number_format($dlMax, 2) . ').';
+    } elseif ($calculatedGwa !== null && $calculatedGwa <= $dlMax && count($equivalentsForGwa) === count($classes)) {
+        $overallStanding = 'In Good Standing (Not At Risk)';
+        $overallBadge = 'ok';
+    } elseif (count($equivalentsForGwa) > 0) {
+        $overallStanding = 'In Good Standing (On Track)';
+        $overallBadge = 'ok';
+    } else {
+        $overallStanding = 'Pending Evaluation';
+        $overallBadge = 'info';
+    }
+
+    return [
+        'classes' => $classes,
+        'calculated_gwa' => $calculatedGwa,
+        'overall_standing' => $overallStanding,
+        'overall_badge' => $overallBadge,
+        'risk_reasons' => $riskReasons,
+        'at_risk_count' => count($atRiskSubjects),
+        'passed_count' => $passedCount,
+        'failed_count' => $failedCount,
+        'in_progress_count' => $inProgressCount,
+        'total_count' => count($classes),
+        'disqualify_line' => $disqualifyLine,
+        'dl_max' => $dlMax,
+        'released_count' => $releasedCount,
+        'grades_open' => $classes !== [] && $releasedCount === count($classes),
+        'overall_plain' => student_plain_risk($overallStanding),
     ];
 }

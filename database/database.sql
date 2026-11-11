@@ -147,6 +147,9 @@ CREATE TABLE students (
     year_level VARCHAR(20) NOT NULL,
     section_id INT UNSIGNED DEFAULT NULL,
     adviser_id INT UNSIGNED DEFAULT NULL,
+    password_hash VARCHAR(255) DEFAULT NULL,
+    email VARCHAR(150) DEFAULT NULL,
+    last_login_at DATETIME DEFAULT NULL,
     is_demo TINYINT(1) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
@@ -177,10 +180,29 @@ CREATE TABLE enrollments (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     assignment_id INT UNSIGNED NOT NULL,
     student_id INT UNSIGNED NOT NULL,
+    prelim_percent_override DECIMAL(5,2) DEFAULT NULL,
+    midterm_percent_override DECIMAL(5,2) DEFAULT NULL,
+    finals_percent_override DECIMAL(5,2) DEFAULT NULL,
+    final_percent_override DECIMAL(5,2) DEFAULT NULL,
+    grades_visible TINYINT(1) NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     UNIQUE KEY uniq_enrollment (assignment_id, student_id),
     CONSTRAINT fk_enroll_assignment FOREIGN KEY (assignment_id) REFERENCES professor_assignments (id),
     CONSTRAINT fk_enroll_student FOREIGN KEY (student_id) REFERENCES students (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE student_password_resets (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    student_id INT UNSIGNED NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME DEFAULT NULL,
+    attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_reset_token (token_hash),
+    KEY idx_reset_student (student_id),
+    CONSTRAINT fk_reset_student FOREIGN KEY (student_id) REFERENCES students (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE grading_scale (
@@ -404,7 +426,7 @@ CREATE TABLE audit_logs (
     entity_id VARCHAR(40) DEFAULT NULL,
     details TEXT,
     ip_address VARCHAR(45) DEFAULT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_audit_created (created_at),
     KEY idx_audit_user (user_id)
@@ -541,19 +563,17 @@ INSERT INTO roles (id, code, name) VALUES
 (1, 'system_admin', 'System Administrator'),
 (2, 'professor', 'Professor'),
 (3, 'program_chair', 'Program Chair'),
-(4, 'college_oic', 'College Department OIC'),
-(5, 'osa', 'Office of Student Affairs'),
-(6, 'registrar', 'Registrar');
+(4, 'college_oic', 'College OIC'),
+(5, 'osa', 'Secretary');
 
 INSERT INTO users (id, username, password_hash, full_name, title, must_change_password) VALUES
-(1, 'admin', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'System Administrator', '', 1),
-(2, 'fquiza', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'Febrick Quiza', 'Mr.', 1),
-(3, 'psantos', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'Santos, Patricia', 'Ms.', 1),
-(4, 'chair.bsit', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'BSIT Program Chair', '', 1),
-(5, 'chair.bshm', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'BSHM Program Chair', '', 1),
-(6, 'oic', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'Cristobal', 'Sir', 1),
-(7, 'osa', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'Student Affairs Officer', '', 1),
-(8, 'registrar', '$2y$10$SdzXZd1D6Paybz94fh7X.uc7RtDSi5JvgZKSc8GjUIYiGSFQ3I7gi', 'College Registrar', '', 1);
+(1, 'admin', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'System Administrator', '', 0),
+(2, 'fquiza', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'Febrick Quiza', 'Mr.', 0),
+(3, 'psantos', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'Santos, Patricia', 'Ms.', 0),
+(4, 'chair.bsit', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'BSIT Program Chair', '', 0),
+(5, 'chair.bshm', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'BSHM Program Chair', '', 0),
+(6, 'oic', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'Cristobal', 'Sir', 0),
+(7, 'secretary', '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 'College Secretary', '', 0);
 
 INSERT INTO programs (id, code, name) VALUES
 (1, 'BSIT', 'Bachelor of Science in Information Technology'),
@@ -568,8 +588,7 @@ INSERT INTO user_roles (user_id, role_id, program_id) VALUES
 (4, 3, 1),
 (5, 3, 2),
 (6, 4, NULL),
-(7, 5, NULL),
-(8, 6, NULL);
+(7, 5, NULL);
 
 INSERT INTO professors (id, user_id) VALUES (1, 2), (2, 3);
 
@@ -594,23 +613,23 @@ INSERT INTO sections (id, program_id, academic_year_id, semester_id, year_level,
 (4, 3, 1, 1, '1st Year', 'TM1A'),
 (5, 4, 1, 1, '1st Year', 'BA1A');
 
-INSERT INTO students (id, student_number, full_name, student_type, program_id, year_level, section_id, is_demo) VALUES
-(1, '04-24-32733', 'Dela Cruz, Reena DC', 'Regular', 1, '4th Year', 1, 1),
-(2, '08-15-41258', 'Agpoon, Cyrus', 'Irregular', 1, '4th Year', 1, 1),
-(3, '06-21-40517', 'Domingo, Maluntag Cabuang III', 'Regular', 1, '4th Year', 1, 1),
-(4, '09-18-43826', 'Villajuan, Vlen Alhen Capalad', 'Regular', 1, '4th Year', 1, 1),
-(5, '11-03-38192', 'Bonifacio, Jed', 'Regular', 1, '4th Year', 2, 1),
-(6, '01-26-10001', 'Santos, Andrea D.', 'Regular', 1, '4th Year', 1, 1),
-(7, '01-26-10002', 'Reyes, Marco L.', 'Regular', 1, '4th Year', 1, 1),
-(8, '01-26-10003', 'Cruz, Hannah P.', 'Regular', 1, '4th Year', 1, 1),
-(9, '01-26-10004', 'Garcia, Luis M.', 'Regular', 1, '4th Year', 1, 1),
-(10, '01-26-10005', 'Flores, Nina S.', 'Regular', 1, '4th Year', 1, 1),
-(11, '01-26-10006', 'Ramos, Paolo T.', 'Regular', 1, '4th Year', 1, 1),
-(12, '01-26-10007', 'Mendoza, Clara V.', 'Regular', 1, '4th Year', 1, 1),
-(13, '01-26-10008', 'Torres, Ethan J.', 'Regular', 1, '4th Year', 1, 1),
-(14, '02-26-20001', 'Navarro, Pia D.', 'Regular', 2, '1st Year', 3, 1),
-(15, '02-26-20002', 'Lim, Jonah C.', 'Regular', 2, '1st Year', 3, 1),
-(16, '02-26-20003', 'Ortiz, Bea M.', 'Irregular', 2, '1st Year', 3, 1);
+INSERT INTO students (id, student_number, full_name, student_type, program_id, year_level, section_id, password_hash, is_demo) VALUES
+(1, '04-24-32733', 'Dela Cruz, Reena DC', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(2, '08-15-41258', 'Agpoon, Cyrus', 'Irregular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(3, '06-21-40517', 'Domingo, Maluntag Cabuang III', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(4, '09-18-43826', 'Villajuan, Vlen Alhen Capalad', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(5, '11-03-38192', 'Bonifacio, Jed', 'Regular', 1, '4th Year', 2, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(6, '01-26-10001', 'Santos, Andrea D.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(7, '01-26-10002', 'Reyes, Marco L.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(8, '01-26-10003', 'Cruz, Hannah P.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(9, '01-26-10004', 'Garcia, Luis M.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(10, '01-26-10005', 'Flores, Nina S.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(11, '01-26-10006', 'Ramos, Paolo T.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(12, '01-26-10007', 'Mendoza, Clara V.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(13, '01-26-10008', 'Torres, Ethan J.', 'Regular', 1, '4th Year', 1, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(14, '02-26-20001', 'Navarro, Pia D.', 'Regular', 2, '1st Year', 3, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(15, '02-26-20002', 'Lim, Jonah C.', 'Regular', 2, '1st Year', 3, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1),
+(16, '02-26-20003', 'Ortiz, Bea M.', 'Irregular', 2, '1st Year', 3, '$2y$10$DYZQSg.tp1Tkv5wEx8kGq.0E4gdXD53r/SE2mQxDgzgLdNC0kO.P6', 1);
 
 INSERT INTO professor_assignments (id, professor_id, subject_id, section_id, semester_id) VALUES
 (1, 1, 1, 1, 1),
@@ -740,6 +759,8 @@ INSERT INTO legacy_predictions (student_number, student_name, student_type, year
 ('04-24-32733', 'Dela Cruz, Reena DC', 'Regular', '4th Year', 'BSIT', '401-C', 'IT Project 1', 88, 87, 85, 80, 85.12, 2.25, 2.25, 'Not DL/PL Qualified - Has a Disqualifying Grade', '2026-09-27 13:39:05'),
 ('08-15-41258', 'Agpoon, Cyrus', 'Irregular', '4th Year', 'BSIT', '401-C', 'FDWDM', 90, 80, 90, 96, 88.43, 2.00, 2.00, 'Not Eligible for DL/PL - Irregular Student', '2026-09-27 13:39:42'),
 ('11-03-38192', 'Bonifacio, Jed', 'Regular', '4th Year', 'BSIT', '401-B', 'IT Project 1', 95, 95, 95, 95, 94.80, 1.50, 1.50, 'Possible DL - For Final Evaluation', '2026-09-27 13:40:01');
+
+SET FOREIGN_KEY_CHECKS = 1;
 
 
 

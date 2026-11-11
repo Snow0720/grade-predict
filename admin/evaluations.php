@@ -27,18 +27,7 @@ $standingFilter = trim((string) ($_GET['standing'] ?? 'all'));
 $search = trim((string) ($_GET['q'] ?? $_POST['q'] ?? ''));
 
 $scope = scoped_program_ids($user);
-
-// Fetch available programs for dropdown
-$programsSql = 'SELECT id, code, name FROM programs';
-if (is_array($scope)) {
-    if ($scope === []) {
-        $programsSql .= ' WHERE 1=0';
-    } else {
-        $programsSql .= ' WHERE id IN (' . implode(',', array_map('intval', $scope)) . ')';
-    }
-}
-$programsSql .= ' ORDER BY code';
-$availablePrograms = db()->query($programsSql)->fetchAll();
+$availablePrograms = programs_for_user($user);
 
 // Dynamic Section Filter Query: Fetch ONLY sections related to selected program & year level
 $sectionWhere = ['pa.semester_id = ?'];
@@ -207,7 +196,7 @@ foreach ($rawStudents as $student) {
     $students[] = $student;
 }
 
-layout_start('DL / PL Evaluations', 'evaluations', [['label' => 'DL / PL']]);
+layout_start('Dean’s List and President’s List', 'evaluations', [['label' => 'DL / PL']]);
 ?>
 <div class="page-head">
     <div>

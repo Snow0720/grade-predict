@@ -10,9 +10,6 @@ $user = require_portal('admin');
 require_permission($user, 'recognition');
 $actor = recognition_actor($user);
 
-// OIC, OSA, and Registrar are all set to monitoring oversight
-$isMonitoringRole = in_array($actor, ['college_oic', 'osa', 'registrar'], true);
-
 $id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 $case = recognition_case($id, $user);
 
@@ -23,10 +20,6 @@ if (!$case) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
-    if ($isMonitoringRole) {
-        flash('error', 'OIC, OSA, and Registrar accounts have monitoring-only oversight access.');
-        redirect('admin/recognition_review.php', ['id' => $id]);
-    }
     $action = (string) ($_POST['action'] ?? '');
     $note = trim((string) ($_POST['note'] ?? ''));
     try {
@@ -85,10 +78,9 @@ $steps = [
     ['System Qualification Check', ['system_check'], $case['standing']],
     ['Program Chair Review', ['endorse', 'chair_return', 'chair_reject'], 'Program review'],
     ['Program Chair Endorsement', ['endorse'], 'Final Program Chair approval'],
-    ['OIC Oversight', ['oic_approve', 'oic_return', 'oic_reject', 'endorse'], 'Administrative monitoring'],
-    ['OSA Oversight', ['osa_approve', 'osa_reject', 'osa_defer', 'endorse'], 'Student affairs monitoring'],
-    ['Registrar Oversight', ['registrar_verify', 'registrar_return', 'endorse'], 'Official archive monitoring'],
-    ['Final DL / PL Record', ['endorse', 'registrar_verify'], 'Official masterlist record'],
+    ['College OIC', ['oic_approve', 'oic_return', 'oic_reject', 'endorse'], 'College OIC review'],
+    ['Secretary', ['osa_approve', 'osa_reject', 'osa_defer', 'endorse'], 'Secretary review'],
+    ['Final DL / PL Record', ['endorse'], 'Official masterlist record'],
 ];
 
 $actionSets = [
@@ -109,13 +101,11 @@ $actionSets = [
     ],
     'college_oic' => [],
     'osa' => [],
-    'registrar' => [],
 ];
 
-// OIC, OSA, and Registrar accounts are strictly monitoring-only
-$actions = $isMonitoringRole ? [] : ($actionSets[$actor][$case['stage']] ?? []);
+$actions = $actionSets[$actor][$case['stage']] ?? [];
 
-layout_start('Review ' . $case['full_name'], 'recognition', [
+layout_start((string) $case['full_name'], 'recognition', [
     ['label' => 'Recognition', 'href' => 'admin/recognition.php'],
     ['label' => $case['student_number']],
 ]);
@@ -123,7 +113,7 @@ layout_start('Review ' . $case['full_name'], 'recognition', [
 <div class="page-head">
     <div>
         <h1><?= h($case['full_name']) ?></h1>
-        <p class="lede"><?= h($case['student_number']) ?> · <?= h($case['program_code']) ?> · Year <?= h((string) $case['year_level']) ?> · <?= h($case['year_label'] . ' ' . $case['semester_name']) ?></p>
+        <p class="lede"><?= h($case['student_number']) ?> · <?= h($case['program_code']) ?> · <?= h((string) $case['year_level']) ?> · <?= h($case['year_label'] . ' ' . $case['semester_name']) ?></p>
     </div>
     <div><?= badge(recognition_stage_label((string) $case['stage']), (string) $case['stage']) ?></div>
 </div>
@@ -139,16 +129,15 @@ layout_start('Review ' . $case['full_name'], 'recognition', [
     <h2><?= icon('final') ?> Recommendations and Approvals Status</h2>
     <div class="kpis">
         <article class="kpi"><span>Program Chair</span><strong style="font-size:16px;"><?= h($case['chair_name'] ?: 'Pending Review') ?></strong></article>
-        <article class="kpi"><span>College OIC</span><strong style="font-size:16px;"><?= h($case['oic_name'] ?: 'Oversight View') ?></strong></article>
-        <article class="kpi"><span>OSA / Committee</span><strong style="font-size:16px;"><?= h($case['osa_name'] ?: 'Oversight View') ?></strong></article>
-        <article class="kpi"><span>Registrar</span><strong style="font-size:16px;"><?= h($case['registrar_name'] ?: 'Oversight View') ?></strong></article>
+        <article class="kpi"><span>College OIC</span><strong style="font-size:16px;"><?= h($case['oic_name'] ?: 'Pending') ?></strong></article>
+        <article class="kpi"><span>Secretary</span><strong style="font-size:16px;"><?= h($case['osa_name'] ?: 'Pending') ?></strong></article>
     </div>
     <?php if ($case['last_note']): ?>
         <p style="margin-top:12px;"><strong>Latest Remarks:</strong> <?= h($case['last_note']) ?></p>
     <?php endif; ?>
 </section>
 
-<?php if ($case['required_action'] && !$isMonitoringRole): ?>
+<?php if ($case['required_action']): ?>
     <div class="alert alert-warn"><strong>Required Action:</strong> <?= h($case['required_action']) ?></div>
 <?php endif; ?>
 
@@ -214,7 +203,7 @@ layout_start('Review ' . $case['full_name'], 'recognition', [
 </section>
 <?php else: ?>
     <div class="alert alert-info">
-        <strong>Workflow Information:</strong> <?= $isMonitoringRole ? 'Your account has read-only monitoring access. Institutional recognition decisions are officially managed by the assigned Program Chair.' : 'Actions for stage <u>' . h(recognition_stage_label((string)$case['stage'])) . '</u> belong to the assigned office personnel.' ?>
+        <strong>Workflow Information:</strong> Actions for stage <u><?= h(recognition_stage_label((string)$case['stage'])) ?></u> belong to the assigned office personnel.
     </div>
 <?php endif; ?>
 
@@ -237,7 +226,7 @@ layout_start('Review ' . $case['full_name'], 'recognition', [
                     <small><?= h(recognition_when((string) $matched['created_at'])) ?></small>
                     <?php if (!empty($matched['note'])): ?><p><?= h($matched['note']) ?></p><?php endif; ?>
                 <?php else: ?>
-                    <span class="hint"><?= h($description) ?> · <?= $isMonitoringRole ? 'Oversight Monitoring' : 'Pending' ?></span>
+                    <span class="hint"><?= h($description) ?> · Pending</span>
                 <?php endif; ?>
             </li>
         <?php endforeach; ?>

@@ -1,11 +1,11 @@
 <?php
-declare(strict_types=1);
-require dirname(__DIR__) . '/config/database.php';
-$hash = password_hash('ChangeMe!2026', PASSWORD_DEFAULT);
-db()->prepare('UPDATE users SET password_hash = ?, must_change_password = 1')->execute([$hash]);
+require dirname(__DIR__) . '/includes/bootstrap.php';
+db_or_setup();
+$hash = password_hash('123', PASSWORD_DEFAULT);
+db()->prepare('UPDATE users SET password_hash = ?, must_change_password = 0')->execute([$hash]);
 $stored = db()->query("SELECT password_hash, must_change_password FROM users WHERE username = 'fquiza'")->fetch();
-if (!password_verify('ChangeMe!2026', $stored['password_hash']) || (int) $stored['must_change_password'] !== 1) {
-    fwrite(STDERR, "restore failed\n");
+if (!password_verify('123', $stored['password_hash']) || (int) $stored['must_change_password'] !== 0) {
+    fwrite(STDERR, "Demo password restore failed\n");
     exit(1);
 }
-echo "demo passwords restored\n";
+echo "demo passwords set to 123\n";

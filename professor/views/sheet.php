@@ -118,9 +118,9 @@ if (!function_exists('clean_pct')) {
             <table class="grade-grid w-100" id="encodingTable">
                 <thead>
                     <tr>
-                        <th class="sticky col-num" rowspan="2">#</th>
-                        <th class="sticky col-sn" rowspan="2">Student number</th>
-                        <th class="sticky col-name" rowspan="2">Student name</th>
+                        <th class="sticky col-num" rowspan="2"><span class="sticky-label">#</span></th>
+                        <th class="sticky col-sn" rowspan="2"><span class="sticky-label">Student number</span></th>
+                        <th class="sticky col-name" rowspan="2"><span class="sticky-label">Student name</span></th>
 
                         <!-- CATEGORY HEADERS WITH BOLD TITLES -->
                         <?php foreach ($visible as $cat => $label): ?>
@@ -188,7 +188,7 @@ if (!function_exists('clean_pct')) {
                         <?php foreach ($visible as $cat => $label): ?>
                             <?php foreach ($student['periods'][$period]['categories'][$cat]['items'] as $item): ?>
                                 <td class="tone-<?= h($tone[$cat]) ?>">
-                                    <input class="score" type="number" inputmode="decimal" min="0" max="<?= h((string) $item['max_score']) ?>" step="0.01"
+                                    <input class="score" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" min="0" max="<?= h((string) (int) $item['max_score']) ?>"
                                            aria-label="<?= h($student['full_name'] . ' ' . $item['label']) ?>"
                                            data-component="<?= (int) $item['id'] ?>"
                                            data-enrollment="<?= (int) $student['enrollment_id'] ?>"
@@ -214,17 +214,102 @@ if (!function_exists('clean_pct')) {
                 </tbody>
             </table>
         </div>
-        <p class="save-state mt-2" id="saveState"><?= $editable ? 'Changes save as you type.' : 'Read only' ?></p>
+        <p class="save-state mt-2" id="saveState"></p>
         <?php require __DIR__ . '/submit_bar.php'; ?>
     </div>
 </div>
 <script type="application/json" id="scaleJson"><?= json_encode($book['scale'], JSON_HEX_TAG | JSON_HEX_AMP) ?></script>
 
-<!-- KEYBOARD NAVIGATION FOR AJAX INPUTS -->
+<!-- KEYBOARD NAVIGATION AND DIGITS-ONLY ENFORCEMENT FOR AJAX INPUTS -->
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    function enforceDigitsOnly(input) {
+        if (input.dataset.digitsOnlyBound === '1') return;
+        input.dataset.digitsOnlyBound = '1';
+
+        input.addEventListener('keydown', function(e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.key === 'Tab') return;
+            if (e.shiftKey) {
+                e.preventDefault();
+                return;
+            }
+            const allowed = [
+                'Backspace', 'Delete', 'Escape', 'Enter',
+                'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+                'Home', 'End'
+            ];
+            if (allowed.includes(e.key)) return;
+
+            // Reject anything that is not a single digit 0-9 (blocks dot, letters, symbols, space)
+            if (!/^[0-9]$/.test(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        input.addEventListener('beforeinput', function(e) {
+            if (e.inputType === 'insertText' && e.data) {
+                if (!/^\d+$/.test(e.data)) {
+                    e.preventDefault();
+                }
+            }
+        });
+
+        input.addEventListener('paste', function(e) {
+            e.preventDefault();
+            const clip = e.clipboardData || window.clipboardData;
+            const text = clip ? clip.getData('text') : '';
+            const digits = text.replace(/\D/g, '');
+            if (!digits) return;
+
+            let start = this.value.length;
+            let end = this.value.length;
+            try {
+                if (typeof this.selectionStart === 'number') {
+                    start = this.selectionStart;
+                    end = this.selectionEnd;
+                }
+            } catch (err) {}
+
+            const cur = this.value;
+            this.value = cur.slice(0, start) + digits + cur.slice(end);
+            try {
+                if (typeof this.setSelectionRange === 'function') {
+                    this.setSelectionRange(start + digits.length, start + digits.length);
+                }
+            } catch (err) {}
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        input.addEventListener('drop', function(e) {
+            e.preventDefault();
+            const text = e.dataTransfer ? e.dataTransfer.getData('text') : '';
+            const digits = text.replace(/\D/g, '');
+            if (!digits) return;
+            this.value = digits;
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        input.addEventListener('input', function() {
+            if (this.value && /\D/.test(this.value)) {
+                const sel = typeof this.selectionStart === 'number' ? this.selectionStart : null;
+                const cleaned = this.value.replace(/\D/g, '');
+                this.value = cleaned;
+                if (sel !== null) {
+                    try {
+                        this.setSelectionRange(Math.min(cleaned.length, sel), Math.min(cleaned.length, sel));
+                    } catch (err) {}
+                }
+            }
+        });
+    }
+
     const inputs = Array.from(document.querySelectorAll('.score:not([readonly])'));
     if (inputs.length === 0) return;
+
+    inputs.forEach(input => {
+        enforceDigitsOnly(input);
+    });
 
     const rows = {};
     inputs.forEach(input => {
@@ -262,13 +347,23 @@ document.addEventListener('DOMContentLoaded', function() {
                     target.focus();
                     target.select();
                 }
-            } else if (e.key === 'ArrowRight' && this.selectionStart === this.value.length) {
-                if (colIndex < rowInputs.length - 1) {
+            } else if (e.key === 'ArrowRight') {
+                let isAtEnd = true;
+                try {
+                    isAtEnd = (this.selectionStart === null || this.selectionStart === this.value.length);
+                } catch (err) {}
+                if (isAtEnd && colIndex < rowInputs.length - 1) {
+                    e.preventDefault();
                     rowInputs[colIndex + 1].focus();
                     rowInputs[colIndex + 1].select();
                 }
-            } else if (e.key === 'ArrowLeft' && this.selectionEnd === 0) {
-                if (colIndex > 0) {
+            } else if (e.key === 'ArrowLeft') {
+                let isAtStart = true;
+                try {
+                    isAtStart = (this.selectionEnd === null || this.selectionEnd === 0);
+                } catch (err) {}
+                if (isAtStart && colIndex > 0) {
+                    e.preventDefault();
                     rowInputs[colIndex - 1].focus();
                     rowInputs[colIndex - 1].select();
                 }

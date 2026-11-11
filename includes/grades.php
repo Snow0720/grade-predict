@@ -118,12 +118,32 @@ function lookup_equivalent(?float $percent, array $scale): ?float
     return 5.0;
 }
 
-function grade_remarks(?float $equivalent, bool $complete): string
+function grade_remarks(?float $equivalent, bool $complete, bool $started = true): string
 {
     if (!$complete || $equivalent === null) {
-        return 'INC';
+        return $started ? 'INC' : '';
     }
     return $equivalent <= 3.0 ? 'PASSED' : 'FAILED';
+}
+
+function subject_watch(?float $equivalent, string $remarks, array $rules = []): array
+{
+    $line = (float) ($rules['disqualify_at'] ?? 2);
+    $mark = strtoupper(trim($remarks));
+    if ($mark === '' && ($equivalent === null || $equivalent === '')) {
+        return ['standing' => 'Pending', 'honor_risk' => 'Pending'];
+    }
+    if ($mark === 'FAILED' || ($equivalent !== null && $equivalent !== '' && (float) $equivalent > 3.0)) {
+        return ['standing' => 'Failed', 'honor_risk' => 'At risk'];
+    }
+    if ($mark === 'INC') {
+        return ['standing' => 'Incomplete', 'honor_risk' => 'At risk'];
+    }
+    $eqv = is_numeric($equivalent) ? (float) $equivalent : null;
+    if ($eqv !== null && $eqv >= $line) {
+        return ['standing' => 'Okay', 'honor_risk' => 'At risk'];
+    }
+    return ['standing' => 'Okay', 'honor_risk' => 'Not at risk'];
 }
 
 function gwa_of(array $equivalents): ?float

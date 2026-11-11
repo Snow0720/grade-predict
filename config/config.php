@@ -39,6 +39,8 @@ define('DB_NAME', $_ENV['DB_NAME'] ?? 'spcc_academic');
 define('DB_USER', $_ENV['DB_USER'] ?? 'root');
 define('DB_PASS', $_ENV['DB_PASS'] ?? '');
 define('APP_DEBUG', ($_ENV['APP_DEBUG'] ?? 'false') === 'true');
+define('RECAPTCHA_SITE_KEY', $_ENV['RECAPTCHA_SITE_KEY'] ?? '');
+define('RECAPTCHA_SECRET_KEY', $_ENV['RECAPTCHA_SECRET_KEY'] ?? '');
 
 define('SCHOOL_NAME', 'Systems Plus Computer College');
 define('SCHOOL_ESTABLISHED', '1985');
@@ -99,10 +101,12 @@ define('CATEGORIES', [
     'exam' => 'Exam',
 ]);
 
-if (session_status() === PHP_SESSION_NONE) {
+if (session_status() === PHP_SESSION_NONE && PHP_SAPI !== 'cli') {
     $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
     $side = $_GET['side'] ?? $_POST['side'] ?? '';
-    $sessionName = (str_contains($script, '/admin/') || $side === 'admin') ? 'SPCCADMIN' : 'SPCCPROF';
+    $sessionName = (str_contains($script, '/admin/') || $side === 'admin')
+        ? 'SPCCADMIN'
+        : ((str_contains($script, '/student/') || $side === 'student') ? 'SPCCSTUDENT' : 'SPCCPROF');
     session_name($sessionName);
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')

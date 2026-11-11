@@ -54,6 +54,45 @@ if (!function_exists('clean_pct')) {
 td.predicted-cell small,
 td.predicted-cell .small { color: #5C6B7A; }
 
+.period-grade-head {
+    text-align: center;
+    background: #E8EEF6;
+    color: #142B49;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.period-grade-head small {
+    display: block;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: #5C6B7A;
+}
+.overall-grade-head {
+    text-align: center;
+    background: #142B49;
+    color: #fff;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.overall-grade-head small {
+    display: block;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: #E7DCC4;
+}
+td.period-pct, td.period-eqv, td.period-remarks {
+    text-align: center;
+    background: #F8FAFC;
+}
+td.overall-pct, td.overall-eqv {
+    text-align: center;
+    font-weight: 800;
+    background: #E7DCC4;
+    color: #142B49;
+}
+
 /* Predicted Cells */
 td.predicted-cell {
     background-color: #f8fafc !important;
@@ -84,28 +123,40 @@ td.predicted-cell {
 </style>
 
 <div class="sheet-body w-100">
+    <p class="hint">Each period has its own grade. Overall combines Prelim, Midterm, and Finals.</p>
     <div class="w-100">
         <div class="sheet-scroll w-100">
             <table class="grade-grid w-100">
                 <thead>
                     <tr>
-                        <th class="sticky col-num" rowspan="2" style="width: 40px; text-align: center;">#</th>
-                        <th class="sticky col-sn" rowspan="2" style="width: 130px;">Student number</th>
-                        <th class="sticky col-name" rowspan="2">Student name</th>
-                        <?php foreach (PERIODS as $label): ?>
-                            <th colspan="2" class="text-center"><?= h($label) ?></th>
+                        <th class="sticky col-num" rowspan="2" style="width: 40px; text-align: center;"><span class="sticky-label">#</span></th>
+                        <th class="sticky col-sn" rowspan="2" style="width: 130px;"><span class="sticky-label">Student number</span></th>
+                        <th class="sticky col-name" rowspan="2"><span class="sticky-label">Student name</span></th>
+                        <?php foreach (PERIODS as $key => $label): ?>
+                            <?php $share = clean_pct($book['period_weights'][$key] ?? 0); ?>
+                            <th colspan="3" class="period-grade-head">
+                                <?= h($label) ?>
+                                <?php if ($share !== '—' && (float) ($book['period_weights'][$key] ?? 0) > 0): ?>
+                                    <small><?= h($share) ?>% of overall</small>
+                                <?php endif; ?>
+                            </th>
                         <?php endforeach; ?>
-                        <th rowspan="2" class="cat-grade">Final Grade</th>
-                        <th rowspan="2" class="cat-grade">Equivalent</th>
-                        <th rowspan="2" class="item-sub-head">Remarks</th>
+                        <th colspan="3" class="overall-grade-head">
+                            Overall
+                            <small>Prelim + Midterm + Finals</small>
+                        </th>
                         <th rowspan="2" class="item-sub-head">Semester GWA / Eligibility</th>
                     </tr>
-              <tr>
-    <?php foreach (PERIODS as $ignored): ?>
-        <th class="item-sub-head">%</th>
-        <th class="item-sub-head">Eqv</th>
-    <?php endforeach; ?>
-</tr>
+                    <tr>
+                        <?php foreach (PERIODS as $ignored): ?>
+                            <th class="item-sub-head">%</th>
+                            <th class="item-sub-head">Eqv</th>
+                            <th class="item-sub-head">Remarks</th>
+                        <?php endforeach; ?>
+                        <th class="item-sub-head">%</th>
+                        <th class="item-sub-head">Eqv</th>
+                        <th class="item-sub-head">Remarks</th>
+                    </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($book['students'] as $student): ?>
@@ -116,17 +167,15 @@ td.predicted-cell {
                             <span class="fw-bold text-dark"><?= h($student['full_name']) ?></span>
                             <small class="sn-mobile"><?= h($student['student_number']) ?></small>
                         </td>
-                        
+
                         <?php foreach (array_keys(PERIODS) as $key): ?>
-                            <td class="text-center fw-semibold"><?= clean_pct($student['periods'][$key]['percent']) ?></td>
-                            <td class="text-center fw-bold text-primary"><?= fmt_eqv($student['periods'][$key]['equivalent']) ?></td>
+                            <td class="period-pct"><?= clean_pct($student['periods'][$key]['percent']) ?></td>
+                            <td class="period-eqv"><?= fmt_eqv($student['periods'][$key]['equivalent']) ?></td>
+                            <td class="period-remarks"><?php $periodRemark = (string) ($student['periods'][$key]['remarks'] ?? ''); ?><?= $periodRemark === '' ? '—' : badge($periodRemark, $periodRemark) ?></td>
                         <?php endforeach; ?>
 
-                        <!-- Final Grade & Equivalent (Exact Theme Match to Summary.php) -->
-                        <td class="grade-total"><?= clean_pct($student['final_percent']) ?></td>
-                        <td class="grade-eqv"><?= fmt_eqv($student['final_equivalent']) ?></td>
-                        
-                        <!-- Remarks Badge -->
+                        <td class="overall-pct"><?= clean_pct($student['final_percent']) ?></td>
+                        <td class="overall-eqv"><?= fmt_eqv($student['final_equivalent']) ?></td>
                         <td class="text-center"><?= badge($student['remarks'], $student['remarks']) ?></td>
 
 <!-- Predicted Final GWA and Candidate Status -->

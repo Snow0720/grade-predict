@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $rules = load_rules($semesterId);
 
-layout_start('DL / PL Criteria', 'rules', [['label' => 'DL / PL criteria']]);
+layout_start('DL / PL Qualification Criteria', 'rules', [['label' => 'DL / PL criteria']]);
 ?>
 <div class="page-head">
     <div>

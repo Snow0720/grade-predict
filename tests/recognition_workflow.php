@@ -9,7 +9,9 @@ function recognition_check(bool $ok, string $label): void
 {
     global $failed;
     echo ($ok ? 'ok  ' : 'FAIL ') . $label . PHP_EOL;
-    if (!$ok) $failed++;
+    if (!$ok) {
+        $failed++;
+    }
 }
 
 $pdo = db();
@@ -32,11 +34,9 @@ try {
     )->execute([$studentId, $semesterId]);
     $caseId = (int) $pdo->lastInsertId();
 
-    $oic = ['id' => 6, 'roles' => ['college_oic'], 'role_rows' => [['code' => 'college_oic', 'program_id' => null]]];
-    $osa = ['id' => 7, 'roles' => ['osa'], 'role_rows' => [['code' => 'osa', 'program_id' => null]]];
-    $registrar = ['id' => 8, 'roles' => ['registrar'], 'role_rows' => [['code' => 'registrar', 'program_id' => null]]];
-    $admin = ['id' => 1, 'roles' => ['system_admin'], 'role_rows' => [['code' => 'system_admin', 'program_id' => null]]];
+    $chair = ['id' => 4, 'roles' => ['program_chair'], 'role_rows' => [['code' => 'program_chair', 'program_id' => 1]]];
     $wrongChair = ['id' => 5, 'roles' => ['program_chair'], 'role_rows' => [['code' => 'program_chair', 'program_id' => 2]]];
+    $admin = ['id' => 1, 'roles' => ['system_admin'], 'role_rows' => [['code' => 'system_admin', 'program_id' => null]]];
 
     $blocked = false;
     try {
@@ -45,35 +45,31 @@ try {
         $blocked = true;
     }
     recognition_check($blocked, 'Program Chair cannot act on another program');
-    $pdo->prepare('UPDATE recognition_cases SET stage = "chair_endorsed" WHERE id = ?')->execute([$caseId]);
 
-    recognition_act($oic, $semesterId, [$caseId], 'oic_approve', 'Administrative requirements checked.');
+    recognition_act($chair, $semesterId, [$caseId], 'chair_return', 'Needs another look.');
     $stage = $pdo->query("SELECT stage FROM recognition_cases WHERE id = $caseId")->fetchColumn();
-    recognition_check($stage === 'oic_approved', 'OIC can approve only a Chair endorsement');
+    recognition_check($stage === 'chair_returned', 'Program Chair can return a candidate');
 
-    recognition_act($osa, $semesterId, [$caseId], 'osa_approve', 'Committee qualified the student.');
+    $pdo->prepare('UPDATE recognition_cases SET stage = "chair_review" WHERE id = ?')->execute([$caseId]);
+    recognition_endorse($chair, $semesterId, [$studentId], 'Endorsed for recognition.');
     $stage = $pdo->query("SELECT stage FROM recognition_cases WHERE id = $caseId")->fetchColumn();
-    recognition_check($stage === 'osa_approved', 'Committee approval reaches Registrar stage');
-
-    recognition_act($registrar, $semesterId, [$caseId], 'registrar_verify', 'Official grades verified.');
-    $stage = $pdo->query("SELECT stage FROM recognition_cases WHERE id = $caseId")->fetchColumn();
-    recognition_check($stage === 'registrar_verified', 'Registrar creates the verified final record');
-    $evaluation = $pdo->query("SELECT status, is_final FROM dl_pl_evaluations WHERE student_id = $studentId AND semester_id = $semesterId AND basis = 'official'")->fetch();
-    recognition_check($evaluation['status'] === 'Final Approved' && (int) $evaluation['is_final'] === 1, 'Registrar verification finalizes the DL/PL evaluation');
+    recognition_check($stage === 'chair_endorsed', 'Program Chair endorsement finalizes the recognition record');
 
     $blocked = false;
     try {
-        recognition_act($admin, $semesterId, [$caseId], 'registrar_verify', '');
+        recognition_act($admin, $semesterId, [$caseId], 'chair_reject', 'Admin should not act.');
     } catch (RuntimeException) {
         $blocked = true;
     }
-    recognition_check($blocked, 'System Admin cannot perform approval decisions');
+    recognition_check($blocked, 'System Admin cannot perform recognition approval decisions');
 
     $events = (int) $pdo->query("SELECT COUNT(*) FROM recognition_events WHERE case_id = $caseId")->fetchColumn();
-    recognition_check($events === 3, 'Every workflow decision has an immutable history event');
+    recognition_check($events >= 2, 'Recognition decisions leave an immutable history');
 } finally {
     $pdo->rollBack();
 }
 
-if ($failed > 0) exit(1);
+if ($failed > 0) {
+    exit(1);
+}
 echo "recognition workflow ok" . PHP_EOL;

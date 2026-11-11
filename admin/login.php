@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/captcha.php';
 
 db_or_setup();
 $error = '';
@@ -10,7 +11,11 @@ if (current_user() && ($_SESSION['portal'] ?? '') === 'admin') {
 }
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
-    $error = attempt_portal_login('admin');
+    if (!captcha_valid()) {
+        $error = 'Check “I’m not a robot”, then sign in.';
+    } else {
+        $error = attempt_portal_login('admin');
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -36,13 +41,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="auth-copy">
             <p class="auth-kicker">College offices</p>
             <h1>Review, endorse, and release the official record.</h1>
-            <p>Program chairs, the College OIC, Student Affairs, and the Registrar share one offices entrance.</p>
+            <p>Program chairs, the College OIC for any department, the Secretary, and the system administrator share one offices entrance.</p>
             <ul class="auth-roles">
                 <li><span>01</span> Program Chair</li>
-                <li><span>02</span> College Department OIC</li>
-                <li><span>03</span> Office of Student Affairs</li>
-                <li><span>04</span> Registrar</li>
-                <li><span>05</span> System Administrator</li>
+                <li><span>02</span> College OIC</li>
+                <li><span>03</span> Secretary</li>
+                <li><span>04</span> System Administrator</li>
             </ul>
         </div>
         <p class="auth-year">Restricted to college offices</p>
@@ -69,18 +73,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </button>
                 </div>
             </div>
-            <button class="btn" type="submit">Enter offices</button>
+            <?= captcha_field() ?>
+            <button class="btn" type="submit">Login</button>
             <details class="demo-accounts">
                 <summary>Sample office accounts</summary>
-                <p>Starting password: <strong>ChangeMe!2026</strong>. A new password is required after sign-in.</p>
+                <p>Starting password: <strong>123</strong>.</p>
                 <table>
                     <tr><th>Username</th><th>Office</th></tr>
                     <tr><td class="mono">admin</td><td>System Administrator</td></tr>
                     <tr><td class="mono">chair.bsit</td><td>BSIT Program Chair</td></tr>
                     <tr><td class="mono">chair.bshm</td><td>BSHM Program Chair</td></tr>
-                    <tr><td class="mono">oic</td><td>College Department OIC</td></tr>
-                    <tr><td class="mono">osa</td><td>Office of Student Affairs</td></tr>
-                    <tr><td class="mono">registrar</td><td>Registrar</td></tr>
+                    <tr><td class="mono">oic</td><td>College OIC</td></tr>
+                    <tr><td class="mono">secretary</td><td>Secretary</td></tr>
                 </table>
             </details>
             <p class="auth-foot"><a href="<?= h(url('index.php')) ?>">College home</a></p>

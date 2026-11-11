@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/captcha.php';
 
 db_or_setup();
 $error = '';
@@ -10,7 +11,11 @@ if (current_user() && ($_SESSION['portal'] ?? '') === 'professor') {
 }
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
-    $error = attempt_portal_login('professor');
+    if (!captcha_valid()) {
+        $error = 'Check “I’m not a robot”, then sign in.';
+    } else {
+        $error = attempt_portal_login('professor');
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -39,11 +44,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 Your grading sheet,<br>ready to encode.
             </h1>
             <p>Open the classes assigned to you and record prelim, midterm, and finals the way the workbook does.</p>
-            <ul class="auth-points">
-                <li>Attendance through examination, in the sheet colors</li>
-                <li>Scores save as you type</li>
-                <li>Submit a period after every score in that period is filled in</li>
-            </ul>
         </div>
         <p class="auth-year">Systems Plus Computer College</p>
     </aside>
@@ -76,19 +76,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </button>
                 </div>
             </div>
+            <?= captcha_field() ?>
             <button class="btn btn-gold" type="submit">Log in</button>
 
-            <?php if (defined('DEMO_MODE') && DEMO_MODE): ?>
             <details class="demo-accounts">
                 <summary>Sample professor accounts</summary>
-                <p>Starting password: <strong>ChangeMe!2026</strong>. A new password is required after sign-in.</p>
+                <p>Starting password: <strong>123</strong>.</p>
                 <table>
                     <tr><th>Username</th><th>Professor</th></tr>
                     <tr><td class="mono">fquiza</td><td>Mr. Febrick Quiza</td></tr>
                     <tr><td class="mono">psantos</td><td>Ms. Santos, Patricia</td></tr>
                 </table>
             </details>
-            <?php endif; ?>
 
             <p class="auth-foot"><a href="<?= h(url('index.php')) ?>">College home</a></p>
         </form>

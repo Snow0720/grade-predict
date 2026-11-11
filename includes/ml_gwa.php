@@ -83,6 +83,7 @@ function ml_student_semester_prediction(
     $prelimGrades = [];
     $midtermGrades = [];
     $finalGrades = [];
+    $updatedGrades = [];
 
     $subjectCount = 0;
     $prelimCompleteCount = 0;
@@ -126,14 +127,22 @@ function ml_student_semester_prediction(
             $finalEquivalent = $subjectStudent['final_equivalent'] ?? null;
             $remarks = strtoupper((string) ($subjectStudent['remarks'] ?? ''));
 
-            if (
-                $remarks !== 'INC' &&
-                $finalEquivalent !== null &&
-                $finalEquivalent !== '' &&
-                is_numeric($finalEquivalent)
-            ) {
+            $finalReady = !empty($subjectStudent['final_complete'])
+                && $remarks !== 'INC'
+                && $finalEquivalent !== null
+                && $finalEquivalent !== ''
+                && is_numeric($finalEquivalent);
+
+            if ($finalReady) {
                 $finalGrades[] = (float) $finalEquivalent;
                 $finalCompleteCount++;
+                $updatedGrades[] = (float) $finalEquivalent;
+            } elseif (
+                !empty($midterm['complete'])
+                && isset($midterm['equivalent'])
+                && is_numeric($midterm['equivalent'])
+            ) {
+                $updatedGrades[] = (float) $midterm['equivalent'];
             }
 
             break;
@@ -162,13 +171,9 @@ function ml_student_semester_prediction(
 
     // All subject final grades are complete: use actual grades, not ML.
     if ($finalCompleteCount === $subjectCount) {
-        $actualGwa = round(
-            array_sum($finalGrades) / $subjectCount,
-            2
-        );
+        $actualGwa = round(array_sum($finalGrades) / $subjectCount, 2);
 
         $disqualified = false;
-
         foreach ($finalGrades as $grade) {
             if ($grade >= 2.00) {
                 $disqualified = true;
@@ -195,20 +200,23 @@ function ml_student_semester_prediction(
         ];
     }
 
-    // Until Finals are complete, retain the existing ML prediction flow.
-    if ($prelimCompleteCount !== $subjectCount) {
+    // Each new period grade updates this student. Blank subjects stay out of the average.
+    $prelimGwa = $prelimGrades === [] ? null : array_sum($prelimGrades) / count($prelimGrades);
+    $updatedGwa = $updatedGrades === [] ? null : array_sum($updatedGrades) / count($updatedGrades);
+
+    if ($prelimGwa === null && $updatedGwa === null) {
         return $base;
     }
 
-    $prelimGwa = array_sum($prelimGrades) / $subjectCount;
-
-    if ($midtermCompleteCount === $subjectCount) {
-        $midtermGwa = array_sum($midtermGrades) / $subjectCount;
-
+    if ($updatedGwa !== null) {
+        $prelimFeature = $prelimGwa ?? $updatedGwa;
         $gwa = ml_gwa_predict([
-            'prelim_gwa' => $prelimGwa,
-            'midterm_gwa' => $midtermGwa,
+            'prelim_gwa' => $prelimFeature,
+            'midterm_gwa' => $updatedGwa,
         ], 'midterm');
+        if ($gwa === null) {
+            $gwa = round(($prelimFeature + $updatedGwa) / 2, 2);
+        }
 
         return [
             ...$base,
@@ -222,6 +230,9 @@ function ml_student_semester_prediction(
     $gwa = ml_gwa_predict([
         'prelim_gwa' => $prelimGwa,
     ], 'prelim');
+    if ($gwa === null) {
+        $gwa = round((float) $prelimGwa, 2);
+    }
 
     return [
         ...$base,

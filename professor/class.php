@@ -35,7 +35,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $action = (string) ($_POST['action'] ?? '');
     try {
-        if ($action === 'submit') {
+        if ($action === 'release_grades') {
+            if (!professor_owns_assignment($assignment, $user)) {
+                throw new RuntimeException('Only the assigned professor can release grades to students.');
+            }
+            $toggleId = (int) ($_POST['toggle_enrollment'] ?? 0);
+            if ($toggleId > 0) {
+                $visible = toggle_student_grade_visibility($id, $toggleId);
+                audit((int) $user['id'], 'release_grades', 'professor_assignment', (string) $id, 'toggle ' . $toggleId . ' · ' . ($visible ? 'visible' : 'hidden'));
+                flash('ok', $visible ? 'This student can now view the grades.' : 'Grades are hidden from this student.');
+            } else {
+                $mode = (string) ($_POST['release_mode'] ?? 'selected');
+                if (!in_array($mode, ['selected', 'all', 'none'], true)) {
+                    $mode = 'selected';
+                }
+                $shown = set_class_grade_visibility($id, $mode, (array) ($_POST['visible'] ?? []));
+                audit((int) $user['id'], 'release_grades', 'professor_assignment', (string) $id, $mode . ' · ' . $shown . ' visible');
+                flash('ok', $mode === 'none' ? 'Grades are hidden from students in this class.' : 'Grade visibility saved. ' . $shown . ' student' . ($shown === 1 ? '' : 's') . ' can view this class.');
+            }
+        } elseif ($action === 'submit') {
             $scope = (string) ($_POST['submit_scope'] ?? '');
             $periods = $scope === 'all' ? ['all'] : [$scope];
             $sent = submit_assignment($user, $id, $periods);
@@ -115,7 +133,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
     }
-    redirect('professor/class.php', sheet_query(['id' => $id, 'view' => $view, 'period' => $period]));
+    $back = ['id' => $id, 'view' => $view, 'period' => $period];
+    if ($action === 'release_grades') {
+        $back['page'] = max(1, (int) ($_POST['visibility_page'] ?? 1));
+    }
+    redirect('professor/class.php', sheet_query($back));
 }
 
 $book = build_gradebook($id);
@@ -165,6 +187,9 @@ layout_start(
     ]
 );
 require __DIR__ . '/views/class_head.php';
+if (($user['portal'] ?? '') === 'professor' && $view === 'sheet') {
+    require __DIR__ . '/views/release.php';
+}
 if ($view === 'summary') {
     require __DIR__ . '/views/summary.php';
 } elseif ($view === 'final') {

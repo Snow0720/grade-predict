@@ -31,15 +31,18 @@ try {
         </div>
         <div class="gate-main">
             <h2 style="font-family:var(--display);color:var(--navy);margin-top:0;">College grading sheet</h2>
-            <p class="lede">Faculty encode grades the way the current workbook does. Offices review the same record through to the Registrar.</p>
             <div class="portal-choices" style="margin-top:22px;">
+                <a href="<?= h(url('student/login.php')) ?>">
+                    <span class="kpi-ico"><?= icon('students') ?></span>
+                    <span><strong>Students</strong><span>Grade monitoring &amp; honor standing</span></span>
+                </a>
                 <a href="<?= h(url('professor/login.php')) ?>">
                     <span class="kpi-ico"><?= icon('classes') ?></span>
                     <span><strong>Professors</strong><span>Faculty grading sheet</span></span>
                 </a>
                 <a href="<?= h(url('admin/login.php')) ?>">
                     <span class="kpi-ico"><?= icon('academics') ?></span>
-                    <span><strong>College offices</strong><span>Chair, OIC, OSA, Registrar, Administrator</span></span>
+                    <span><strong>College offices</strong><span>Chair, OIC, Secretary, Administrator</span></span>
                 </a>
             </div>
         </div>

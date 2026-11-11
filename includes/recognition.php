@@ -7,7 +7,7 @@ require_once __DIR__ . '/workflow.php';
 
 function recognition_actor(array $user): string
 {
-    foreach (['program_chair', 'college_oic', 'osa', 'registrar'] as $role) {
+    foreach (['program_chair', 'college_oic', 'osa'] as $role) {
         if (in_array($role, $user['roles'], true)) {
             return $role;
         }
@@ -28,10 +28,10 @@ function recognition_stage_label(string $stage): string
         'oic_approved' => 'Approved by OIC (Oversight)',
         'oic_returned' => 'Returned by OIC',
         'oic_rejected' => 'Rejected by OIC',
-        'osa_approved' => 'Qualified by Committee (Oversight)',
-        'osa_rejected' => 'Rejected by Committee',
-        'osa_deferred' => 'Deferred by Committee',
-        'registrar_returned' => 'Returned by Registrar',
+        'osa_approved' => 'Qualified by the Secretary',
+        'osa_rejected' => 'Rejected by the Secretary',
+        'osa_deferred' => 'Deferred by the Secretary',
+        'registrar_returned' => 'Returned for correction',
         'registrar_verified' => 'Officially Recorded',
         'approved' => 'Approved & Finalized',
         'final' => 'Approved & Finalized',
@@ -59,13 +59,6 @@ function recognition_stage_group(string $actor, string $stage): string
             'chair_endorsed' => 'approved',
             'approved' => 'approved',
             'final' => 'approved',
-            'chair_review' => 'review',
-        ],
-        'registrar' => [
-            'chair_endorsed' => 'verified',
-            'approved' => 'verified',
-            'final' => 'verified',
-            'registrar_verified' => 'verified',
             'chair_review' => 'review',
         ],
     ];
@@ -101,7 +94,7 @@ function recognition_notify_role(string $role, string $title, string $body, ?int
 {
     $sql = 'SELECT ur.user_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE r.code = ?';
     $params = [$role];
-    if ($programId !== null) {
+    if ($programId !== null && !in_array($role, ['system_admin', 'college_oic', 'osa'], true)) {
         $sql .= ' AND ur.program_id = ?';
         $params[] = $programId;
     }
@@ -159,9 +152,7 @@ function recognition_rows(array $user, int $semesterId, string $search, string $
     $actor = recognition_actor($user);
     
     // Read-only monitoring roles see all cases
-    if (in_array($actor, ['college_oic', 'osa', 'registrar', 'viewer'], true)) {
-        $where[] = 'rc.id IS NOT NULL';
-    } elseif ($actor === 'program_chair') {
+    if (in_array($actor, ['college_oic', 'osa', 'viewer', 'program_chair'], true)) {
         $where[] = 'rc.id IS NOT NULL';
     }
 
@@ -279,7 +270,8 @@ function recognition_endorse(array $user, int $semesterId, array $studentIds, st
     if ($ids === []) {
         throw new RuntimeException('Select at least one student.');
     }
-    $scope = scoped_program_ids($user) ?? [];
+    $scope = scoped_program_ids($user);
+    $chairPrograms = chair_program_ids($user);
     $endorsed = 0;
     $skipped = [];
     $pdo = db();
@@ -289,7 +281,12 @@ function recognition_endorse(array $user, int $semesterId, array $studentIds, st
             $stmt = $pdo->prepare('SELECT id, full_name, program_id, student_type FROM students WHERE id = ? FOR UPDATE');
             $stmt->execute([$studentId]);
             $student = $stmt->fetch();
-            if (!$student || !in_array((int) $student['program_id'], $scope, true)) {
+            $programId = $student ? (int) $student['program_id'] : 0;
+            $allowed = $student && (
+                ($scope === null && ($chairPrograms === [] || in_array($programId, $chairPrograms, true)))
+                || (is_array($scope) && in_array($programId, $scope, true))
+            );
+            if (!$allowed) {
                 $skipped[] = 'A selected student is outside your department.';
                 continue;
             }
@@ -422,7 +419,7 @@ function recognition_add_note(array $user, int $caseId, string $note): void
     }
     $case = recognition_case($caseId, $user);
     $actor = recognition_actor($user);
-    if (!$case || !in_array($actor, ['program_chair', 'college_oic', 'osa', 'registrar'], true)) {
+    if (!$case || !in_array($actor, ['program_chair', 'college_oic', 'osa'], true)) {
         throw new RuntimeException('This record is not available for your role.');
     }
     db()->prepare('UPDATE recognition_cases SET last_note = ? WHERE id = ?')->execute([$note, $caseId]);
@@ -433,7 +430,7 @@ function recognition_add_note(array $user, int $caseId, string $note): void
 function recognition_official(int $semesterId): array
 {
     $stmt = db()->prepare(
-        'SELECT st.student_number, st.full_name, st.year_level, p.code AS program_code, p.name AS program_name,
+        'SELECT st.student_number, st.full_name, st.year_level, p.id AS program_id, p.code AS program_code, p.name AS program_name,
                 rc.id, rc.list_type, rc.gwa, rc.standing, rc.endorsed_at, rc.committee_at, rc.osa_at, rc.verified_at,
                 chair.full_name AS chair_name, chair.title AS chair_title,
                 oic.full_name AS oic_name, oic.title AS oic_title,

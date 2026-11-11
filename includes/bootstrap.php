@@ -76,6 +76,7 @@ function pwa_tags(): void
     <meta name="draft-url" content="<?= h(url('api/draft.php')) ?>">
     <meta name="professor-login" content="<?= h(url('professor/login.php')) ?>">
     <meta name="admin-login" content="<?= h(url('admin/login.php')) ?>">
+    <meta name="student-login" content="<?= h(url('student/login.php')) ?>">
     <meta name="sw-url" content="<?= h(url('sw.js')) ?>">
     <meta name="sw-scope" content="<?= h(app_scope()) ?>">
     <?php
@@ -150,7 +151,7 @@ function pull_flashes(): array
 function audit(?int $userId, string $action, string $entity, ?string $entityId, string $details): void
 {
     $stmt = db()->prepare(
-        'INSERT INTO audit_logs (user_id, action, entity, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO audit_logs (user_id, action, entity, entity_id, details, ip_address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     );
     $stmt->execute([
         $userId,
@@ -159,6 +160,7 @@ function audit(?int $userId, string $action, string $entity, ?string $entityId, 
         $entityId,
         $details,
         substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
+        date('Y-m-d H:i:s'),
     ]);
 }
 
@@ -178,13 +180,29 @@ function fmt_eqv(?float $value): string
     return $value === null ? '—' : number_format($value, 2);
 }
 
+function subject_label(string $programCode, string $code, string $name = ''): string
+{
+    $label = trim($programCode) !== '' ? ($programCode . ' - ' . $code) : $code;
+    $norm = static function (string $value): string {
+        return strtolower((string) preg_replace('/[\s\-_.]+/', '', $value));
+    };
+    if ($name !== '' && $norm($name) !== $norm($code)) {
+        $label .= ' · ' . $name;
+    }
+    return $label;
+}
+
 function fmt_date(?string $value): string
 {
     if ($value === null || $value === '') {
         return '—';
     }
-    $time = strtotime($value);
-    return $time === false ? h($value) : date('M j, Y', $time);
+    try {
+        $dt = new DateTimeImmutable($value, new DateTimeZone('Asia/Manila'));
+        return $dt->format('M j, Y');
+    } catch (Throwable $e) {
+        return h($value);
+    }
 }
 
 function fmt_when(?string $value): string
@@ -192,8 +210,13 @@ function fmt_when(?string $value): string
     if ($value === null || $value === '') {
         return '—';
     }
-    $time = strtotime($value);
-    return $time === false ? h($value) : date('M j, Y g:i A', $time);
+    try {
+        // Treat DB datetimes as Manila wall-clock (session time_zone is +08:00).
+        $dt = new DateTimeImmutable($value, new DateTimeZone('Asia/Manila'));
+        return $dt->format('M j, Y g:i A');
+    } catch (Throwable $e) {
+        return h($value);
+    }
 }
 
 function submission_label(string $status): string
@@ -204,8 +227,8 @@ function submission_label(string $status): string
         'returned' => 'Returned for correction',
         'chair_verified' => 'Verified by the Program Chair',
         'oic_approved' => 'Approved by the College OIC',
-        'osa_endorsed' => 'Endorsed by OSA',
-        'registrar_finalized' => 'Finalized by the Registrar',
+        'osa_endorsed' => 'Endorsed by the Secretary',
+        'registrar_finalized' => 'Finalized by the Secretary',
     ][$status] ?? $status;
 }
 
@@ -220,8 +243,12 @@ function badge(string $label, ?string $key = null): string
         'oic_approved' => 'info',
         'osa_endorsed' => 'info',
         'registrar_finalized' => 'ok',
-        'Possible PL' => 'ok',
-        'Possible DL' => 'ok',
+        'Possible PL' => 'gold',
+        'Possible DL' => 'info',
+        'President\'s List' => 'gold',
+        'Dean\'s List' => 'info',
+        'PL' => 'gold',
+        'DL' => 'info',
         'Not Eligible' => 'warn',
         'Pending' => 'muted',
         'Final Approved' => 'gold',
@@ -239,7 +266,12 @@ function badge(string $label, ?string $key = null): string
         'Returned' => 'warn',
         'PASSED' => 'ok',
         'FAILED' => 'bad',
+        'Failed' => 'bad',
+        'Okay' => 'ok',
+        'Incomplete' => 'warn',
         'INC' => 'warn',
+        'At risk' => 'warn',
+        'Not at risk' => 'ok',
         'Regular' => 'info',
         'Irregular' => 'muted',
         'assigned' => 'ok',
@@ -297,7 +329,7 @@ function users_with_role(string $role, ?int $programId = null): array
             JOIN roles r ON r.id = ur.role_id
             WHERE u.is_active = 1 AND r.code = ?';
     $params = [$role];
-    if ($programId !== null) {
+    if ($programId !== null && !in_array($role, ['system_admin', 'college_oic', 'osa'], true)) {
         $sql .= ' AND ur.program_id = ?';
         $params[] = $programId;
     }
@@ -314,7 +346,7 @@ function render_setup_error(Throwable $e): void
     <style>body{font-family:Segoe UI,sans-serif;background:#142B49;color:#fff;margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:640px;background:#fff;color:#142B49;padding:32px;border-radius:16px}code{background:#F5F7FA;padding:2px 6px;border-radius:6px}</style>
     </head><body><main><h1>Database setup is still needed</h1><p>' . $detail . '</p>
     <ol><li>Start Apache and MySQL in the XAMPP Control Panel.</li>
-    <li>Open phpMyAdmin and import <code>database/database.sql</code>. The script creates <code>spcc_academic</code>.</li>
+    <li>Open the database in phpMyAdmin, then import <code>database/database.sql</code>.</li>
     <li>Check <code>.env</code> if local MySQL is not using user <code>root</code> with an empty password.</li></ol>
     </main></body></html>';
     exit;

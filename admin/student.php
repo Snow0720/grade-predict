@@ -7,6 +7,7 @@ require_once __DIR__ . '/../includes/workflow.php';
 require_once __DIR__ . '/../includes/layout.php';
 
 db_or_setup();
+ensure_student_auth_columns();
 $user = require_portal('admin');
 require_permission($user, 'students_read');
 ensure_student_adviser_column();
@@ -33,6 +34,13 @@ if (!$student || (is_array($scope) && !in_array((int) $student['program_id'], $s
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && can($user, 'students_write')) {
     require_csrf();
+    if (($_POST['action'] ?? '') === 'reset_portal_password') {
+        db()->prepare('UPDATE students SET password_hash = ? WHERE id = ?')
+            ->execute([password_hash(student_default_password(), PASSWORD_DEFAULT), $id]);
+        audit((int) $user['id'], 'student_password_reset', 'student', (string) $id, 'Portal password reset to the starting password');
+        flash('ok', 'Portal password reset to 123. Ask the student to sign in and change it from Profile.');
+        redirect('admin/student.php', ['id' => $id]);
+    }
     $studentNumber = trim((string) ($_POST['student_number'] ?? ''));
     $name = trim((string) ($_POST['full_name'] ?? ''));
     $type = ($_POST['student_type'] ?? '') === 'Irregular' ? 'Irregular' : 'Regular';
@@ -40,6 +48,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && can($user, 'students_write')) {
     $programId = (int) ($_POST['program_id'] ?? 0);
     $sectionId = (int) ($_POST['section_id'] ?? 0);
     $professorId = (int) ($_POST['professor_id'] ?? 0);
+    try {
+        $email = normalize_recovery_email((string) ($_POST['email'] ?? ''));
+    } catch (Throwable $e) {
+        flash('error', $e->getMessage());
+        redirect('admin/student.php', ['id' => $id]);
+    }
 
     if ($studentNumber === '' || $name === '' || $year === '' || $programId <= 0) {
         flash('error', 'Student ID, name, program, and year level are required.');
@@ -71,8 +85,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && can($user, 'students_write')) {
                 $professorName = trim($professor['title'] . ' ' . $professor['full_name']);
             }
             $before = $student['student_number'] . ' | ' . $student['full_name'] . ' | program ' . $student['program_id'];
-            db()->prepare('UPDATE students SET student_number = ?, full_name = ?, student_type = ?, year_level = ?, program_id = ?, section_id = ?, adviser_id = ? WHERE id = ?')
-                ->execute([$studentNumber, $name, $type, $year, $programId, $sectionId > 0 ? $sectionId : null, $professorId > 0 ? $professorId : null, $id]);
+            db()->prepare('UPDATE students SET student_number = ?, full_name = ?, student_type = ?, year_level = ?, program_id = ?, section_id = ?, adviser_id = ?, email = ? WHERE id = ?')
+                ->execute([$studentNumber, $name, $type, $year, $programId, $sectionId > 0 ? $sectionId : null, $professorId > 0 ? $professorId : null, $email, $id]);
             $enrolled = enroll_student_for_professor($id, $professorId, $sectionId);
             audit((int) $user['id'], 'student_update', 'student', (string) $id, $before . ' -> ' . $studentNumber . ' | ' . $name . ' | program ' . $programId . ($professorName !== '' ? ' | professor ' . $professorName : ''));
             $message = 'Student record updated successfully.';
@@ -96,7 +110,7 @@ $sections = db()->prepare('SELECT id, name, year_level FROM sections WHERE progr
 $sections->execute([(int) $student['program_id']]);
 $sections = $sections->fetchAll();
 
-$programs = db()->query('SELECT id, code, name FROM programs ORDER BY code')->fetchAll();
+$programs = programs_for_user($user);
 $faculty = faculty_masterlist();
 $adviserLabel = trim((string) ($student['adviser_title'] ?? '') . ' ' . (string) ($student['adviser_name'] ?? ''));
 
@@ -128,7 +142,7 @@ layout_start($student['full_name'], 'students', [
 <div class="page-head">
     <div>
         <h1><?= h($student['full_name']) ?></h1>
-        <p class="lede"><?= h($student['program_code']) ?> · <?= h($student['program_name']) ?> · Year <?= h((string) $student['year_level']) ?> · Section <?= h($student['section_name'] ?? 'Unassigned') ?> · Professor <?= h($adviserLabel !== '' ? $adviserLabel : 'Unassigned') ?></p>
+        <p class="lede"><?= h($student['program_code']) ?> · <?= h($student['program_name']) ?> · <?= h((string) $student['year_level']) ?> · Section <?= h($student['section_name'] ?? 'Unassigned') ?> · Professor <?= h($adviserLabel !== '' ? $adviserLabel : 'Unassigned') ?></p>
     </div>
     <div>
         <?= badge($student['student_type'], $student['student_type']) ?>
@@ -185,6 +199,10 @@ layout_start($student['full_name'], 'students', [
             
             <label for="full_name">Full Name</label>
             <input id="full_name" name="full_name" value="<?= h($student['full_name']) ?>" required>
+
+            <label for="email">Recovery email</label>
+            <input id="email" name="email" type="email" value="<?= h((string) ($student['email'] ?? '')) ?>" placeholder="Gmail or school email" required>
+            <p class="hint">The student uses this address when they forget the portal password.</p>
             
             <label for="year_level">Year Level</label>
             <input id="year_level" name="year_level" value="<?= h($student['year_level']) ?>" required>
@@ -223,6 +241,13 @@ layout_start($student['full_name'], 'students', [
             <div style="margin-top: 16px;">
                 <button class="btn btn-gold" type="submit">Save Changes</button>
             </div>
+        </form>
+        <form method="post" action="<?= h(url('admin/student.php', ['id' => $id])) ?>" style="margin-top:18px;" onsubmit="return confirm('Reset this student portal password to 123?');">
+            <?= csrf_field() ?>
+            <input type="hidden" name="id" value="<?= $id ?>">
+            <input type="hidden" name="action" value="reset_portal_password">
+            <p class="hint">Starting password is 123. Use this if the student cannot sign in and cannot reach the recovery email.</p>
+            <button class="btn btn-ghost" type="submit">Reset portal password to 123</button>
         </form>
     </article>
     <?php endif; ?>

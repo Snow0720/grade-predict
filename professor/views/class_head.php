@@ -25,8 +25,8 @@ $pageHeading = match ($view) {
     </div>
     <div class="sheet-meta">
         <div>Section <strong><?= h($assignment['section_name']) ?></strong></div>
-        <div>Teacher / Professor <strong><?= h(trim($assignment['professor_title'] . ' ' . $assignment['professor_name'])) ?></strong></div>
-        <div><?= h($assignment['subject_code']) ?> · <?= h($assignment['subject_name']) ?></div>
+        <div>Professor <strong><?= h(trim($assignment['professor_title'] . ' ' . $assignment['professor_name'])) ?></strong></div>
+        <div><?= h(subject_label('', (string) $assignment['subject_code'], (string) $assignment['subject_name'])) ?></div>
         <div><?= h($assignment['program_code']) ?> · <?= h($assignment['year_label']) ?> <?= h($assignment['semester_name']) ?></div>
     </div>
 </section>
@@ -60,7 +60,7 @@ if (in_array($view, ['sheet', 'summary'], true) && isset(PERIODS[$period]) && in
 <?php endif; ?>
 
 <?php if ($view === 'sheet'): ?>
-    <p class="hint" style="margin-top:0;">A blank cell is not encoded yet and stays out of the total. Type 0 when the student scored zero. Offline scores stay on this device and sync to the college record when you reconnect.</p>
+    <p class="hint" style="margin-top:0;">A blank cell is not encoded yet and stays out of the total. Type 0 when the student scored zero.</p>
 <?php endif; ?>
 
 <?php if (in_array($view, ['sheet', 'summary'], true)): ?>

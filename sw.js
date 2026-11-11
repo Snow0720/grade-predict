@@ -1,6 +1,7 @@
-const CACHE = 'spcc-grades-v2';
+const CACHE = 'spcc-grades-v5';
 const SHELL = [
     'index.php',
+    'student/login.php',
     'professor/login.php',
     'admin/login.php',
     'manifest.php',
@@ -47,6 +48,9 @@ function isApi(url) {
 function keepCopy(request, response) {
     if (!response || !response.ok) return false;
     const finalUrl = new URL(response.url);
+    if (finalUrl.pathname.indexOf('captcha.php') !== -1) {
+        return false;
+    }
     if (finalUrl.pathname.indexOf('login.php') !== -1 && request.url.indexOf('login.php') === -1) {
         return false;
     }
@@ -133,6 +137,10 @@ self.addEventListener('fetch', function (event) {
     if (request.method !== 'GET') return;
     const url = new URL(request.url);
     if (url.origin !== self.location.origin || isApi(url)) return;
+    if (url.pathname.indexOf('captcha.php') !== -1) {
+        event.respondWith(fetch(request, { cache: 'no-store' }));
+        return;
+    }
 
     event.respondWith((async function () {
         const cached = await fromCache(request);

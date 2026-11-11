@@ -2,18 +2,20 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/gradebook.php';
 require_once __DIR__ . '/../includes/layout.php';
 
 db_or_setup();
+ensure_student_auth_columns();
+ensure_student_adviser_column();
 $user = require_portal('admin');
 require_permission($user, 'manage_users');
 
 $officeRoles = [
     'system_admin' => 'System Administrator',
     'program_chair' => 'Program Chair',
-    'college_oic' => 'College Department OIC',
-    'osa' => 'Office of Student Affairs',
-    'registrar' => 'Registrar',
+    'college_oic' => 'College OIC',
+    'osa' => 'Secretary',
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -76,15 +78,110 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             audit((int) $user['id'], 'account_update', 'user', (string) $target, $role . ' ' . $name);
             db()->commit();
             flash('ok', 'Office account updated successfully.');
+        } elseif ($action === 'create_student') {
+            $scope = scoped_program_ids($user);
+            $studentNumber = trim((string) ($_POST['student_number'] ?? ''));
+            $name = trim((string) ($_POST['full_name'] ?? ''));
+            $programId = (int) ($_POST['program_id'] ?? 0);
+            $year = trim((string) ($_POST['year_level'] ?? ''));
+            $type = ($_POST['student_type'] ?? '') === 'Irregular' ? 'Irregular' : 'Regular';
+            $sectionId = (int) ($_POST['section_id'] ?? 0);
+            $professorId = (int) ($_POST['professor_id'] ?? 0);
+            $email = normalize_recovery_email((string) ($_POST['email'] ?? ''));
+
+            if ($studentNumber === '' || $name === '' || $programId <= 0 || $year === '') {
+                throw new RuntimeException('Complete the student number, name, program, and year level.');
+            }
+            if (is_array($scope) && !in_array($programId, $scope, true)) {
+                throw new RuntimeException('That program is outside your access.');
+            }
+            if ($sectionId > 0) {
+                $section = db()->prepare('SELECT program_id FROM sections WHERE id = ?');
+                $section->execute([$sectionId]);
+                $sectionProgram = (int) $section->fetchColumn();
+                if ($sectionProgram !== $programId) {
+                    throw new RuntimeException('The section must belong to the selected program.');
+                }
+            }
+            $professorName = '';
+            if ($professorId > 0) {
+                $professor = db()->prepare(
+                    'SELECT pr.id, u.full_name, u.title
+                     FROM professors pr
+                     JOIN users u ON u.id = pr.user_id
+                     WHERE pr.id = ? AND u.is_active = 1'
+                );
+                $professor->execute([$professorId]);
+                $professor = $professor->fetch();
+                if (!$professor) {
+                    throw new RuntimeException('Choose an active professor from the faculty masterlist.');
+                }
+                $professorName = trim($professor['title'] . ' ' . $professor['full_name']);
+            }
+
+            db()->prepare(
+                'INSERT INTO students (student_number, full_name, student_type, year_level, program_id, section_id, adviser_id, email, password_hash)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $studentNumber,
+                $name,
+                $type,
+                $year,
+                $programId,
+                $sectionId > 0 ? $sectionId : null,
+                $professorId > 0 ? $professorId : null,
+                $email,
+                password_hash(student_default_password(), PASSWORD_DEFAULT),
+            ]);
+
+            $studentId = (int) db()->lastInsertId();
+            $enrolled = enroll_student_for_professor($studentId, $professorId, $sectionId);
+            $detail = $studentNumber . ' ' . $name;
+            if ($professorName !== '') {
+                $detail .= ' · professor ' . $professorName;
+            }
+            audit((int) $user['id'], 'student_create', 'student', (string) $studentId, $detail);
+            $message = 'Student portal account created. Starting password is 123. Recovery email: ' . $email . '.';
+            if ($professorName !== '') {
+                $message .= ' Assigned professor: ' . $professorName . '.';
+                if ($sectionId <= 0) {
+                    $message .= ' Choose a section so they can be placed on that professor\'s grade sheet.';
+                } elseif ($enrolled > 0) {
+                    $message .= ' Placed on ' . $enrolled . ' class sheet' . ($enrolled === 1 ? '' : 's') . '.';
+                } else {
+                    $message .= ' That professor has no class sheet for this section yet.';
+                }
+            }
+            flash('ok', $message);
         }
     } catch (Throwable $e) {
         if (db()->inTransaction()) db()->rollBack();
-        flash('error', str_contains($e->getMessage(), 'Duplicate') ? 'That username already exists.' : $e->getMessage());
+        $duplicate = str_contains($e->getMessage(), 'Duplicate');
+        if ($duplicate && $action === 'create_student') {
+            flash('error', 'That student number already exists.');
+        } elseif ($duplicate) {
+            flash('error', 'That username already exists.');
+        } else {
+            flash('error', $e->getMessage());
+        }
     }
     redirect('admin/users.php');
 }
 
 $programs = db()->query('SELECT id, code FROM programs ORDER BY code')->fetchAll();
+$studentScope = scoped_program_ids($user);
+$studentPrograms = programs_for_user($user, 'id, code');
+$faculty = faculty_masterlist();
+$studentSectionSql = 'SELECT sec.id, sec.name, sec.year_level, sec.program_id, p.code AS program_code
+     FROM sections sec
+     JOIN programs p ON p.id = sec.program_id';
+if (is_array($studentScope)) {
+    $studentSectionSql .= $studentScope === []
+        ? ' WHERE 1 = 0'
+        : ' WHERE sec.program_id IN (' . implode(',', array_map('intval', $studentScope)) . ')';
+}
+$studentSectionSql .= ' ORDER BY p.code, sec.year_level, sec.name';
+$sectionChoices = db()->query($studentSectionSql)->fetchAll();
 $accounts = db()->query(
     "SELECT u.id, u.username, u.full_name, u.is_active, r.name AS role_name, r.code AS role_code,
             p.id AS program_id, p.code AS program_code
@@ -105,12 +202,12 @@ foreach ($accounts as $acc) {
     if ($acc['role_code'] === 'program_chair') $programChairs++;
 }
 
-layout_start('Office Accounts', 'users', [['label' => 'Office accounts']]);
+layout_start('Office Accounts Management', 'users', [['label' => 'Office accounts']]);
 ?>
 <div class="page-head">
     <div>
         <h1>Office Accounts Management</h1>
-        <p class="lede">Manage administrative office accounts, role permissions, and department scope assignments.</p>
+        <p class="lede">Manage office accounts and create student portal accounts. A new student starts with password 123.</p>
     </div>
 </div>
 
@@ -141,11 +238,11 @@ layout_start('Office Accounts', 'users', [['label' => 'Office accounts']]);
         
         <div>
             <label for="full_name">Full Name</label>
-            <input id="full_name" name="full_name" placeholder="e.g. Registrar Officer" required>
+            <input id="full_name" name="full_name" placeholder="e.g. College Secretary" required>
         </div>
         <div>
             <label for="username">System Username</label>
-            <input id="username" name="username" placeholder="e.g. registrar" required>
+            <input id="username" name="username" placeholder="e.g. secretary" required>
         </div>
         <div>
             <label for="role">Assigned Role</label>
@@ -170,6 +267,70 @@ layout_start('Office Accounts', 'users', [['label' => 'Office accounts']]);
         </div>
         <div class="wide" style="margin-top: 6px;">
             <button class="btn btn-gold" type="submit">Create Office Account</button>
+        </div>
+    </form>
+</section>
+
+<section class="card" style="margin-top: 18px;">
+    <h2><?= icon('students') ?> New Student Portal Account</h2>
+    <p class="hint">The student gives you their Gmail or school email. The starting password is 123. They change it after signing in.</p>
+    <form method="post" class="form-grid" style="margin-top: 14px;" data-offline-save data-offline-label="New student account">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="create_student">
+        <div>
+            <label for="new_student_number">Student ID / Number</label>
+            <input id="new_student_number" name="student_number" placeholder="e.g. 08-15-41258" required>
+        </div>
+        <div>
+            <label for="new_full_name">Full Name</label>
+            <input id="new_full_name" name="full_name" placeholder="Last Name, First Name M." required>
+        </div>
+        <div>
+            <label for="new_email">Recovery email</label>
+            <input id="new_email" name="email" type="email" placeholder="student@gmail.com or school email" required>
+            <p class="hint">Used when the student forgets the password.</p>
+        </div>
+        <div>
+            <label for="new_program">Program</label>
+            <select id="new_program" name="program_id">
+                <?php foreach ($studentPrograms as $item): ?>
+                    <option value="<?= (int) $item['id'] ?>"><?= h($item['code']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div>
+            <label for="new_year">Year Level</label>
+            <input id="new_year" name="year_level" placeholder="e.g. 4th Year" required>
+        </div>
+        <div>
+            <label for="new_type">Academic Standing Type</label>
+            <select id="new_type" name="student_type">
+                <option value="Regular">Regular</option>
+                <option value="Irregular">Irregular</option>
+            </select>
+        </div>
+        <div>
+            <label for="new_section">Section</label>
+            <select id="new_section" name="section_id">
+                <option value="0">Unassigned / None</option>
+                <?php foreach ($sectionChoices as $item): ?>
+                    <option value="<?= (int) $item['id'] ?>" data-program="<?= (int) $item['program_id'] ?>"><?= h($item['program_code'] . ' · ' . $item['year_level'] . ' · ' . $item['name']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div>
+            <label for="new_professor">Assigned Professor</label>
+            <select id="new_professor" name="professor_id">
+                <option value="0">Unassigned / None</option>
+                <?php foreach ($faculty as $person): ?>
+                    <?php if ((int) $person['is_active'] !== 1) continue; ?>
+                    <option value="<?= (int) $person['professor_id'] ?>"><?= h(professor_choice_label($person)) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <p class="hint">The student is placed on this professor's grade sheets for the selected section.</p>
+        </div>
+        <div class="wide" style="margin-top: 6px;">
+            <button class="btn btn-gold" type="submit">Create Student Account</button>
         </div>
     </form>
 </section>
@@ -236,4 +397,24 @@ layout_start('Office Accounts', 'users', [['label' => 'Office accounts']]);
     </div>
 </section>
 
+<script>
+(function () {
+    var program = document.getElementById('new_program');
+    var section = document.getElementById('new_section');
+    if (!program || !section) return;
+    var options = Array.prototype.slice.call(section.options);
+    function sync() {
+        var pid = program.value;
+        options.forEach(function (opt) {
+            if (!opt.getAttribute('data-program')) return;
+            var show = opt.getAttribute('data-program') === pid;
+            opt.hidden = !show;
+            opt.disabled = !show;
+            if (!show && opt.selected) section.value = '0';
+        });
+    }
+    program.addEventListener('change', sync);
+    sync();
+})();
+</script>
 <?php layout_end(); ?>

@@ -27,15 +27,6 @@ $allowed = [
     ],
 ];
 
-if (($_GET['export'] ?? '') === 'json') {
-    $rows = db()->query('SELECT setting_key, setting_value FROM school_settings ORDER BY setting_key')->fetchAll(PDO::FETCH_KEY_PAIR);
-    audit((int) $user['id'], 'settings_export', 'school_settings', null, 'Configuration JSON');
-    header('Content-Type: application/json; charset=utf-8');
-    header('Content-Disposition: attachment; filename="system-settings.json"');
-    echo json_encode($rows, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $save = db()->prepare(
@@ -60,17 +51,12 @@ foreach ($allowed as $key => $info) {
     }
 }
 
-layout_start('System Settings', 'settings', [['label' => 'System settings']]);
+layout_start('System Technical Settings', 'settings', [['label' => 'System settings']]);
 ?>
 <div class="page-head">
     <div>
         <h1>System Technical Settings</h1>
         <p class="lede">Technical settings do not grant approval authority. Workflow decisions remain strictly with designated personnel.</p>
-    </div>
-    <div>
-        <a class="btn btn-ghost btn-sm" href="<?= h(url('admin/settings.php', ['export' => 'json'])) ?>">
-            <?= icon('download') ?> Export Configuration JSON
-        </a>
     </div>
 </div>
 
@@ -122,7 +108,7 @@ layout_start('System Settings', 'settings', [['label' => 'System settings']]);
 </section>
 
 <div class="alert alert-info" style="margin-top: 16px;">
-    <strong>Governance Note:</strong> Configuration adjustments take effect immediately across all administrative portal modules.
+    <strong>Note:</strong> Configuration adjustments take effect immediately across all administrative portal modules.
 </div>
 
 <?php layout_end(); ?>

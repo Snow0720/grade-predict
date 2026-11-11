@@ -8,6 +8,7 @@ function icon(string $name): string
         'classes' => '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
         'queue' => '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5h6V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1z"/><path d="m9 12 2 2 4-4"/>',
         'award' => '<circle cx="12" cy="8" r="5"/><path d="M8.2 13.9 7 21l5-2.5L17 21l-1.2-7.1"/>',
+        'watch' => '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.3 2.7 16.5A2 2 0 0 0 4.4 19h15.2a2 2 0 0 0 1.7-2.5L13.7 3.3a2 2 0 0 0-3.4 0z"/>',
         'students' => '<circle cx="9" cy="8" r="3"/><path d="M3 20v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1"/><circle cx="17" cy="9" r="2"/><path d="M21 20v-1a3 3 0 0 0-2.4-2.9"/>',
         'faculty' => '<circle cx="12" cy="8" r="3.5"/><path d="M5 20v-1a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v1"/>',
         'academics' => '<path d="M3 21h18"/><path d="M5 21V8l7-4 7 4v13"/><path d="M9 21v-6h6v6"/>',
@@ -33,6 +34,8 @@ function icon(string $name): string
         'download' => '<path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/>',
         'print' => '<path d="M6 9V3h12v6"/><rect x="6" y="13" width="12" height="8"/><path d="M6 17H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/>',
         'check' => '<path d="M20 6 9 17l-5-5"/>',
+        'eye' => '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+        'eye-off' => '<path d="M3 3l18 18"/><path d="M10.6 10.6a3 3 0 0 0 4.2 4.2"/><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a18.5 18.5 0 0 1-3.2 4.2"/><path d="M6.1 6.1C3.5 8 2 12 2 12s3.5 7 10 7a10.8 10.8 0 0 0 4.1-.8"/>',
         'plus' => '<path d="M12 5v14"/><path d="M5 12h14"/>',
         'trash' => '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
         'pin' => '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
@@ -43,6 +46,11 @@ function icon(string $name): string
 
 function nav_items(array $user): array
 {
+    if (($user['portal'] ?? '') === 'student') {
+        return [
+            ['id' => 'grades', 'href' => 'student/dashboard.php', 'icon' => 'classes', 'label' => 'My Grades & Standing'],
+        ];
+    }
     if (($user['portal'] ?? '') === 'professor') {
         return [
             ['id' => 'dash', 'href' => 'professor/dashboard.php', 'icon' => 'dashboard', 'label' => 'Dashboard'],
@@ -72,6 +80,7 @@ function nav_items(array $user): array
     }
     if (can($user, 'rules')) {
         $items[] = ['id' => 'rules', 'href' => 'admin/rules.php', 'icon' => 'rules', 'label' => 'DL / PL criteria'];
+        $items[] = ['id' => 'scale', 'href' => 'admin/scale.php', 'icon' => 'award', 'label' => 'Grade equivalent'];
     }
     if (can($user, 'settings')) {
         $items[] = ['id' => 'settings', 'href' => 'admin/settings.php', 'icon' => 'settings', 'label' => 'System settings'];
@@ -92,7 +101,7 @@ function nav_items(array $user): array
         $items[] = ['id' => 'analytics', 'href' => 'admin/analytics.php', 'icon' => 'analytics', 'label' => 'Analytics'];
     }
     if (can($user, 'audit')) {
-        $items[] = ['id' => 'audit', 'href' => 'admin/audit.php', 'icon' => 'audit', 'label' => 'Audit'];
+        $items[] = ['id' => 'audit', 'href' => 'admin/audit.php', 'icon' => 'audit', 'label' => 'Logs'];
     }
     return $items;
 }
@@ -100,7 +109,21 @@ function nav_items(array $user): array
 function layout_start(string $title, string $active, array $crumbs = [], string $bodyClass = '', array $side = []): void
 {
     $user = current_user();
-    $unread = $user ? unread_count((int) $user['id']) : 0;
+    if (!$user) {
+        $student = current_student();
+        if ($student) {
+            $user = [
+                'id' => 0,
+                'username' => $student['student_number'],
+                'full_name' => $student['full_name'],
+                'title' => '',
+                'portal' => 'student',
+                'role_label' => 'Student · ' . $student['student_number'],
+                'roles' => ['student'],
+            ];
+        }
+    }
+    $unread = ($user && !empty($user['id'])) ? unread_count((int) $user['id']) : 0;
     ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -116,14 +139,14 @@ function layout_start(string $title, string $active, array $crumbs = [], string 
 <a class="skip" href="#content">Skip to content</a>
 <div class="shell">
     <aside class="sidebar" id="sidebar">
-        <a class="brand" href="<?= h(url(($user['portal'] ?? '') === 'admin' ? 'admin/dashboard.php' : 'professor/dashboard.php')) ?>">
+        <a class="brand" href="<?= h(url(($user['portal'] ?? '') === 'admin' ? 'admin/dashboard.php' : (($user['portal'] ?? '') === 'student' ? 'student/dashboard.php' : 'professor/dashboard.php'))) ?>">
             <img src="<?= h(url('img/logo.png')) ?>" alt="">
             <span>
                 <strong>Systems Plus</strong>
                 <em>Computer College</em>
             </span>
         </a>
-        <p class="portal-tag"><?= ($user['portal'] ?? '') === 'admin' ? 'Administrative portal' : 'Professor portal' ?></p>
+        <p class="portal-tag"><?= ($user['portal'] ?? '') === 'admin' ? 'Administrative portal' : (($user['portal'] ?? '') === 'student' ? 'Student portal' : 'Professor portal') ?></p>
         <nav class="sidenav" aria-label="Primary">
             <?php foreach (nav_items($user) as $item): ?>
                 <a class="<?= $item['id'] === $active ? 'is-active' : '' ?>" href="<?= h(url($item['href'])) ?>"><?= icon($item['icon']) ?><span><?= h($item['label']) ?></span></a>
@@ -136,8 +159,13 @@ function layout_start(string $title, string $active, array $crumbs = [], string 
             <?php endif; ?>
         </nav>
         <div class="side-foot">
-            <a href="<?= h(url('password.php', ['side' => ($user['portal'] ?? '') === 'admin' ? 'admin' : 'professor'])) ?>"><?= icon('key') ?><span>Password</span></a>
-            <a href="<?= h(url('logout.php', ['side' => ($user['portal'] ?? '') === 'admin' ? 'admin' : 'professor'])) ?>"><?= icon('logout') ?><span>Sign out</span></a>
+            <?php if (($user['portal'] ?? '') === 'student'): ?>
+                <a class="<?= $active === 'profile' ? 'is-active' : '' ?>" href="<?= h(url('student/profile.php')) ?>"><?= icon('faculty') ?><span>Profile</span></a>
+                <a href="<?= h(url('student/logout.php')) ?>"><?= icon('logout') ?><span>Sign out</span></a>
+            <?php else: ?>
+                <a href="<?= h(url('password.php', ['side' => ($user['portal'] ?? '') === 'admin' ? 'admin' : 'professor'])) ?>"><?= icon('key') ?><span>Password</span></a>
+                <a href="<?= h(url('logout.php', ['side' => ($user['portal'] ?? '') === 'admin' ? 'admin' : 'professor'])) ?>"><?= icon('logout') ?><span>Sign out</span></a>
+            <?php endif; ?>
         </div>
     </aside>
     <div class="nav-scrim" id="navScrim"></div>
@@ -146,25 +174,31 @@ function layout_start(string $title, string $active, array $crumbs = [], string 
             <button type="button" class="icon-btn" id="navToggle" aria-label="Toggle menu">
                 <span></span><span></span><span></span>
             </button>
+            <?php
+            $trail = array_values(array_filter(
+                $crumbs,
+                static fn($c) => is_array($c) && trim((string) ($c['label'] ?? '')) !== ''
+            ));
+            $parents = count($trail) >= 2 ? array_slice($trail, 0, -1) : [];
+            ?>
             <div class="crumbs">
-                <?php if ($crumbs === []): ?>
-                    <span><?= h($title) ?></span>
-                <?php else: ?>
-                    <?php foreach ($crumbs as $i => $crumb): ?>
-                        <?php if ($i > 0): ?><span class="sep">/</span><?php endif; ?>
-                        <?php if (!empty($crumb['href'])): ?>
-                            <a href="<?= h(url($crumb['href'])) ?>"><?= h($crumb['label']) ?></a>
-                        <?php else: ?>
-                            <span><?= h($crumb['label']) ?></span>
-                        <?php endif; ?>
-                    <?php endforeach; ?>
-                <?php endif; ?>
+                <?php foreach ($parents as $crumb): ?>
+                    <?php if (!empty($crumb['href'])): ?>
+                        <a href="<?= h(url($crumb['href'])) ?>"><?= h($crumb['label']) ?></a>
+                    <?php else: ?>
+                        <span><?= h($crumb['label']) ?></span>
+                    <?php endif; ?>
+                    <span class="sep">/</span>
+                <?php endforeach; ?>
+                <h1 class="top-title"><?= h($title) ?></h1>
             </div>
             <div class="top-actions">
+                <?php if (($user['portal'] ?? '') !== 'student'): ?>
                 <a class="bell" href="<?= h(url('notifications.php', ['side' => ($user['portal'] ?? '') === 'admin' ? 'admin' : 'professor'])) ?>" aria-label="Notifications">
                     <?= icon('bell') ?>
                     <?php if ($unread > 0): ?><span><?= $unread ?></span><?php endif; ?>
                 </a>
+                <?php endif; ?>
                 <div class="who">
                     <strong><?= h(display_name($user)) ?></strong>
                     <small><?= h($user['role_label']) ?></small>
@@ -229,19 +263,8 @@ function scale_card(array $scale): string
 {
     $html = '<aside class="scale-card"><h2>' . icon('award') . ' Grade equivalent</h2><ul class="scale-list">';
     foreach ($scale as $band) {
-        $min = (float) $band['min_percent'];
-        $max = (float) $band['max_percent'];
-        if ($min <= 0) {
-            $label = 'Below 75%';
-        } elseif ($min >= 98) {
-            $label = '98–100%';
-        } elseif ($min >= 75 && $max < 78) {
-            $label = '75–76%';
-        } else {
-            $label = (int) round($min) . '–' . (int) floor($max) . '%';
-        }
-        $html .= '<li><span>' . h($label) . '</span><strong>' . number_format((float) $band['equivalent'], 2) . '</strong><em>' . h((string) ($band['description'] ?? '')) . '</em></li>';
+        $html .= '<li><span>' . h(scale_range_label($band)) . '</span><strong>' . number_format((float) $band['equivalent'], 2) . '</strong><em>' . h((string) ($band['description'] ?? '')) . '</em></li>';
     }
-    $html .= '</ul><p>1.00 is the highest mark. 3.00 is the lowest passing mark. Below 75% is 5.00, Failed.</p></aside>';
+    $html .= '</ul><p>1.00 is the highest mark. 3.00 is the lowest passing mark. The lowest band is Failed.</p></aside>';
     return $html;
 }

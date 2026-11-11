@@ -105,55 +105,37 @@
         node.id = 'draftBar';
         node.className = 'draft-bar';
         node.hidden = true;
-        node.innerHTML = '<p id="draftBarText"></p><button type="button" class="btn btn-sm" id="draftBarSync">Sync now</button>';
+        node.innerHTML = '<p id="draftBarText"></p>';
         document.body.appendChild(node);
-        node.querySelector('#draftBarSync').addEventListener('click', function () {
-            flush();
-        });
         return node;
     }
 
     function paint() {
         const node = bar();
         const text = node.querySelector('#draftBarText');
-        const button = node.querySelector('#draftBarSync');
         const scoreCount = pending.length;
         const recordCount = office.length;
         const count = scoreCount + recordCount;
-        const waiting = pending.filter(function (row) { return !row.failed; }).length
-            + office.filter(function (row) { return !row.failed; }).length;
         const noun = recordCount && !scoreCount
             ? (count === 1 ? 'record' : 'records')
             : (scoreCount && !recordCount ? (count === 1 ? 'score' : 'scores') : (count === 1 ? 'change' : 'changes'));
         const offline = !navigator.onLine;
-        if (!offline && count === 0) {
+        if (!offline) {
             node.hidden = true;
             return;
         }
         node.hidden = false;
-        node.classList.toggle('is-offline', offline);
-        button.hidden = offline || waiting === 0;
-        if (offline && count === 0) {
+        node.classList.add('is-offline');
+        if (count === 0) {
             text.textContent = document.querySelector('[data-gradebook]')
                 ? 'You are offline. Scores you enter stay on this device.'
                 : (location.pathname.indexOf('/admin/') !== -1
                     ? 'You are offline. Office pages saved on this device stay open.'
                     : 'You are offline. Open Gradebook still opens the classes saved on this device.');
-        } else if (offline) {
-            text.textContent = count === 1
-                ? '1 ' + noun + ' is saved on this device. It will sync when you reconnect.'
-                : count + ' ' + noun + ' are saved on this device. They will sync when you reconnect.';
-        } else if (needsSignIn) {
-            text.textContent = 'Sign in to save ' + (count === 1 ? 'the saved ' + noun : count + ' saved ' + noun) + ' to the college record.';
-            button.hidden = true;
-        } else if (waiting === 0) {
-            text.textContent = count === 1
-                ? '1 saved ' + noun + ' could not be saved to the college record.'
-                : count + ' saved ' + noun + ' could not be saved to the college record.';
         } else {
-            text.textContent = waiting === 1
-                ? 'Syncing the saved ' + (recordCount && !scoreCount ? 'record' : (scoreCount && !recordCount ? 'score' : 'change')) + '.'
-                : 'Syncing all ' + waiting + ' saved ' + (recordCount && !scoreCount ? 'records' : (scoreCount && !recordCount ? 'scores' : 'changes')) + '.';
+            text.textContent = count === 1
+                ? '1 ' + noun + ' is saved on this device. It will save automatically when you reconnect.'
+                : count + ' ' + noun + ' are saved on this device. They will save automatically when you reconnect.';
         }
     }
 

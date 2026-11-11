@@ -28,27 +28,42 @@ if (!$assignment || (is_array($scope) && !in_array((int) $assignment['program_id
     exit('This submission is outside your program.');
 }
 
-$isOicOrOsa = in_array('college_oic', $user['roles'], true) || in_array('osa', $user['roles'], true);
-
 $canViewCurrent = user_can_review($user, $assignment, (string) $submission['status']);
-if (!$canViewCurrent && !in_array('system_admin', $user['roles'], true) && !$isOicOrOsa) {
+if (!$canViewCurrent && !in_array('system_admin', $user['roles'], true)) {
     $handled = db()->prepare('SELECT 1 FROM submission_reviews WHERE submission_id = ? AND reviewer_id = ? LIMIT 1');
     $handled->execute([$id, (int) $user['id']]);
     if (!$handled->fetchColumn()) {
-        http_response_code(403);
-        exit('This submission is not assigned to your office.');
+        // College offices share the admin view, so any office account may open the sheet.
+        if (!array_intersect($user['roles'], office_roles())) {
+            http_response_code(403);
+            exit('This submission is not assigned to your office.');
+        }
     }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
-    if ($isOicOrOsa) {
-        flash('error', 'OIC and OSA roles have monitoring-only access.');
-        redirect('admin/review.php', ['id' => $id]);
-    }
     try {
-        review_submission($user, $id, (string) ($_POST['review_action'] ?? ''), (string) ($_POST['remarks'] ?? ''));
-        flash('ok', 'Review action recorded successfully.');
+        $action = (string) ($_POST['action'] ?? $_POST['review_action'] ?? '');
+        if ($action === 'save_percents') {
+            $rows = [];
+            foreach ((array) ($_POST['pct'] ?? []) as $enrollmentId => $values) {
+                $rows[] = [
+                    'enrollment_id' => (int) $enrollmentId,
+                    'prelim' => $values['prelim'] ?? '',
+                    'midterm' => $values['midterm'] ?? '',
+                    'finals' => $values['finals'] ?? '',
+                    'final' => $values['final'] ?? '',
+                ];
+            }
+            $count = save_percent_overrides($user, (int) $submission['assignment_id'], $rows);
+            flash('ok', $count > 0
+                ? "Saved office grade percents for {$count} student(s). Equivalents updated from the scale."
+                : 'Grade percents were saved.');
+        } else {
+            review_submission($user, $id, (string) ($_POST['review_action'] ?? ''), (string) ($_POST['remarks'] ?? ''));
+            flash('ok', 'Review action recorded successfully.');
+        }
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
     }
@@ -62,20 +77,65 @@ $history = db()->prepare(
 $history->execute([$id]);
 $history = $history->fetchAll();
 
-// OIC & OSA accounts are strictly monitoring-only
-$canAct = $isOicOrOsa ? false : user_can_review($user, $assignment, $submission['status']);
+$canAct = user_can_review($user, $assignment, $submission['status']);
+$canEditPct = array_intersect($user['roles'], office_roles())
+    && !assignment_is_finalized($assignment);
 
-// Calculate quick stats
+// Calculate quick stats and Possible DL / PL
 $totalStudents = count($book['students']);
 $passedCount = 0;
+$rules = load_rules((int) ($assignment['semester_id'] ?? 0));
+
+$evalMap = [];
+if (!empty($assignment['semester_id'])) {
+    try {
+        $evalStmt = db()->prepare('SELECT student_id, basis, status, gwa FROM dl_pl_evaluations WHERE semester_id = ?');
+        $evalStmt->execute([(int) $assignment['semester_id']]);
+        foreach ($evalStmt->fetchAll() as $ev) {
+            $evalMap[(int) $ev['student_id']][$ev['basis']] = $ev;
+        }
+    } catch (Throwable $e) {}
+}
+
+$plCandidatesCount = 0;
+$dlCandidatesCount = 0;
+$studentStandings = [];
+
 foreach ($book['students'] as $st) {
     if (strtoupper((string)($st['remarks'] ?? '')) === 'PASSED') {
         $passedCount++;
     }
+    $sid = (int) ($st['student_id'] ?? 0);
+    $standing = null;
+    if (isset($evalMap[$sid])) {
+        $off = (string) ($evalMap[$sid]['official']['status'] ?? '');
+        $pred = (string) ($evalMap[$sid]['predicted']['status'] ?? '');
+        if (in_array($off, ['Possible PL', 'President\'s List', 'PL'], true) || in_array($pred, ['Possible PL', 'President\'s List', 'PL'], true)) {
+            $standing = 'Possible PL';
+        } elseif (in_array($off, ['Possible DL', 'Dean\'s List', 'DL'], true) || in_array($pred, ['Possible DL', 'Dean\'s List', 'DL'], true)) {
+            $standing = 'Possible DL';
+        }
+    }
+    if ($standing === null) {
+        $eqv = $st['final_equivalent'] !== null ? (float) $st['final_equivalent'] : ($st['predicted_equivalent'] !== null ? (float) $st['predicted_equivalent'] : null);
+        if ($eqv !== null && $eqv > 0) {
+            if ($eqv <= (float) $rules['pl_max']) {
+                $standing = 'Possible PL';
+            } elseif ($eqv <= (float) $rules['dl_max']) {
+                $standing = 'Possible DL';
+            }
+        }
+    }
+    $studentStandings[$st['enrollment_id']] = $standing;
+    if ($standing === 'Possible PL') {
+        $plCandidatesCount++;
+    } elseif ($standing === 'Possible DL') {
+        $dlCandidatesCount++;
+    }
 }
 $passRate = $totalStudents > 0 ? round(($passedCount / $totalStudents) * 100, 1) : 0;
 
-layout_start('Review ' . $assignment['subject_code'], 'queue', [
+layout_start($assignment['subject_code'] . ' · ' . $assignment['section_name'], 'queue', [
     ['label' => 'Review queue', 'href' => 'admin/queue.php'],
     ['label' => $assignment['subject_code'] . ' ' . $assignment['section_name']],
 ]);
@@ -101,6 +161,14 @@ layout_start('Review ' . $assignment['subject_code'], 'queue', [
         <strong><?= $passRate ?>%</strong>
     </article>
     <article class="kpi">
+        <span>Possible PL</span>
+        <strong style="color: #b45309;"><?= $plCandidatesCount ?></strong>
+    </article>
+    <article class="kpi">
+        <span>Possible DL</span>
+        <strong style="color: #0284c7;"><?= $dlCandidatesCount ?></strong>
+    </article>
+    <article class="kpi">
         <span>Current Workflow Stage</span>
         <strong style="font-size:16px;"><?= h(submission_label($submission['status'])) ?></strong>
     </article>
@@ -113,35 +181,143 @@ layout_start('Review ' . $assignment['subject_code'], 'queue', [
             <?= icon('sheet') ?> View Full Sheet
         </a>
     </div>
-    <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>Student Name</th>
-                    <th>Type</th>
-                    <th>Final %</th>
-                    <th>Equivalent</th>
-                    <th>Remarks</th>
-                    <th>Predicted Eqv</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($book['students'] as $student): ?>
-                <tr>
-                    <td>
-                        <strong><?= h($student['full_name']) ?></strong>
-                        <br><span class="mono hint"><?= h($student['student_number']) ?></span>
-                    </td>
-                    <td><?= badge((string) $student['student_type'], (string) $student['student_type']) ?></td>
-                    <td><?= fmt_pct($student['final_percent']) ?></td>
-                    <td><strong><?= fmt_eqv($student['final_equivalent']) ?></strong></td>
-                    <td><?= badge((string) $student['remarks'], (string) $student['remarks']) ?></td>
-                    <td><?= fmt_eqv($student['predicted_equivalent']) ?></td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-    </div>
+    <?php if ($canEditPct): ?>
+        <p class="hint">College offices can edit the grade <strong>percent</strong> here. The equivalent updates from the official scale. Leave a field blank to keep the professor-computed percent. Professors cannot change these.</p>
+        <form method="post">
+            <?= csrf_field() ?>
+            <input type="hidden" name="id" value="<?= $id ?>">
+            <input type="hidden" name="action" value="save_percents">
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Student Name</th>
+                            <th>Type</th>
+                            <th>Prelim %</th>
+                            <th>Eqv</th>
+                            <th>Midterm %</th>
+                            <th>Eqv</th>
+                            <th>Finals %</th>
+                            <th>Eqv</th>
+                            <th>Final %</th>
+                            <th>Final Eqv</th>
+                            <th>Remarks</th>
+                            <th>Possible DL / PL</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($book['students'] as $student): ?>
+                        <?php $eid = (int) $student['enrollment_id']; ?>
+                        <tr>
+                            <td>
+                                <strong><?= h($student['full_name']) ?></strong>
+                                <br><span class="mono hint"><?= h($student['student_number']) ?></span>
+                            </td>
+                            <td><?= badge((string) $student['student_type'], (string) $student['student_type']) ?></td>
+                            <?php foreach (['prelim', 'midterm', 'finals'] as $periodKey): ?>
+                                <?php
+                                $override = $student['percent_overrides'][$periodKey] ?? null;
+                                $computedPct = $student['periods'][$periodKey]['computed_percent'] ?? $student['periods'][$periodKey]['percent'];
+                                ?>
+                                <td>
+                                    <input
+                                        type="number"
+                                        name="pct[<?= $eid ?>][<?= $periodKey ?>]"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        value="<?= $override !== null ? h(number_format((float) $override, 2, '.', '')) : '' ?>"
+                                        placeholder="<?= $computedPct === null ? '—' : h(number_format((float) $computedPct, 2, '.', '')) ?>"
+                                        aria-label="<?= h(PERIODS[$periodKey] . ' percent for ' . $student['full_name']) ?>"
+                                        style="width: 88px;"
+                                    >
+                                </td>
+                                <td><strong><?= fmt_eqv($student['periods'][$periodKey]['equivalent'] === null ? null : (float) $student['periods'][$periodKey]['equivalent']) ?></strong></td>
+                            <?php endforeach; ?>
+                            <td>
+                                <?php
+                                $finalOverride = $student['percent_overrides']['final'] ?? null;
+                                $finalComputed = $student['computed_final_percent'] ?? $student['final_percent'];
+                                ?>
+                                <input
+                                    type="number"
+                                    name="pct[<?= $eid ?>][final]"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    value="<?= $finalOverride !== null ? h(number_format((float) $finalOverride, 2, '.', '')) : '' ?>"
+                                    placeholder="<?= $finalComputed === null ? '—' : h(number_format((float) $finalComputed, 2, '.', '')) ?>"
+                                    aria-label="<?= h('Final percent for ' . $student['full_name']) ?>"
+                                    style="width: 88px;"
+                                >
+                            </td>
+                            <td><strong><?= fmt_eqv($student['final_equivalent'] === null ? null : (float) $student['final_equivalent']) ?></strong></td>
+                            <td><?= badge((string) $student['remarks'], (string) $student['remarks']) ?></td>
+                            <td>
+                                <?php if (($studentStandings[$eid] ?? '') === 'Possible PL'): ?>
+                                    <span class="badge badge-gold">Possible PL</span>
+                                <?php elseif (($studentStandings[$eid] ?? '') === 'Possible DL'): ?>
+                                    <span class="badge badge-info">Possible DL</span>
+                                <?php else: ?>
+                                    <span class="hint">—</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top: 14px;">
+                <button class="btn" type="submit"><?= icon('check') ?> Save Grade Percents</button>
+            </div>
+        </form>
+    <?php else: ?>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Student Name</th>
+                        <th>Type</th>
+                        <th>Final %</th>
+                        <th>Equivalent</th>
+                        <th>Remarks</th>
+                        <th>Predicted Eqv</th>
+                        <th>Possible DL / PL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($book['students'] as $student): ?>
+                    <?php $eid = (int) $student['enrollment_id']; ?>
+                    <tr>
+                        <td>
+                            <strong><?= h($student['full_name']) ?></strong>
+                            <br><span class="mono hint"><?= h($student['student_number']) ?></span>
+                        </td>
+                        <td><?= badge((string) $student['student_type'], (string) $student['student_type']) ?></td>
+                        <td><?= fmt_pct($student['final_percent']) ?></td>
+                        <td>
+                            <strong><?= fmt_eqv($student['final_equivalent'] === null ? null : (float) $student['final_equivalent']) ?></strong>
+                            <?php if (!empty($student['final_percent_overridden'])): ?>
+                                <br><span class="hint">Office override</span>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= badge((string) $student['remarks'], (string) $student['remarks']) ?></td>
+                        <td><?= fmt_eqv($student['predicted_equivalent'] === null ? null : (float) $student['predicted_equivalent']) ?></td>
+                        <td>
+                            <?php if (($studentStandings[$eid] ?? '') === 'Possible PL'): ?>
+                                <span class="badge badge-gold">Possible PL</span>
+                            <?php elseif (($studentStandings[$eid] ?? '') === 'Possible DL'): ?>
+                                <span class="badge badge-info">Possible DL</span>
+                            <?php else: ?>
+                                <span class="hint">—</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
 </section>
 
 <?php if ($canAct): ?>
@@ -163,7 +339,7 @@ layout_start('Review ' . $assignment['subject_code'], 'queue', [
 </section>
 <?php else: ?>
     <div class="alert alert-info">
-        <strong>Workflow Note:</strong> <?= $isOicOrOsa ? 'Your account has monitoring-only access. Primary verification and approval actions are assigned to the Program Chair.' : 'Review actions for this status belong to another office. You can inspect the computed grades and full audit timeline above.' ?>
+        <strong>Workflow Note:</strong> Review actions for this status belong to another office. You can inspect the computed grades and full audit timeline above.
     </div>
 <?php endif; ?>
 

@@ -52,6 +52,8 @@ $final = weighted_percent(['prelim' => 100, 'midterm' => 100, 'finals' => 90], [
 check($final['percent'] === 96.0 && lookup_equivalent($final['percent'], $scale) === 1.25, '30/30/40 final');
 $inc = weighted_percent(['prelim' => 100, 'midterm' => null, 'finals' => 90], ['prelim' => 30, 'midterm' => 30, 'finals' => 40], 0);
 check($inc['complete'] === false && grade_remarks(null, false) === 'INC', 'missing term is INC');
+check(grade_remarks(null, false, false) === '', 'empty term is not INC');
+check(grade_remarks(null, false, true) === 'INC', 'partial term is INC');
 
 check(gwa_of([1.50, 1.25, 1.75, 1.50]) === 1.50, 'unweighted GWA');
 $rules = ['irregular_ineligible' => 1, 'disqualify_at' => 2, 'pl_min' => 1, 'pl_max' => 1.25, 'dl_min' => 1.26, 'dl_max' => 1.75];
@@ -60,6 +62,11 @@ check(dlpl_status('Regular', [1.0, 2.25], $rules, true)['status'] === 'Not Eligi
 check(dlpl_status('Regular', [1.0, 1.25], $rules, true)['status'] === 'Possible PL', 'possible PL');
 check(dlpl_status('Regular', [1.50, 1.50], $rules, true)['status'] === 'Possible DL', 'possible DL');
 check(dlpl_status('Regular', [], $rules, false)['status'] === 'Pending', 'pending');
+check(subject_watch(1.25, 'PASSED', $rules) === ['standing' => 'Okay', 'honor_risk' => 'Not at risk'], 'strong subject is not at risk');
+check(subject_watch(2.25, 'PASSED', $rules) === ['standing' => 'Okay', 'honor_risk' => 'At risk'], 'passing subject can still be at risk');
+check(subject_watch(5.0, 'FAILED', $rules) === ['standing' => 'Failed', 'honor_risk' => 'At risk'], 'failed subject is at risk');
+check(subject_watch(null, 'INC', $rules) === ['standing' => 'Incomplete', 'honor_risk' => 'At risk'], 'incomplete subject is at risk');
+check(subject_watch(null, '', $rules) === ['standing' => 'Pending', 'honor_risk' => 'Pending'], 'empty subject is pending');
 
 $predicted = preserved_linear_prediction(['attendance' => 90, 'recitation' => 85, 'activities' => 88, 'quizzes' => 80, 'project' => 92, 'exam' => 84]);
 check($predicted === null || ($predicted >= 0 && $predicted <= 100), 'trained linear model prediction stays within 0-100 when model exists');

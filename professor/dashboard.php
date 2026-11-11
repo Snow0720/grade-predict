@@ -146,9 +146,9 @@ layout_start('Dashboard', 'dash', [['label' => 'Dashboard']]);
 
 <div class="page-head" style="margin-bottom: 24px;">
     <div>
-        <h1 style="margin: 0; font-size: 1.75rem; font-weight: 800; color: #0f172a;">
+        <p class="greeting" style="margin: 0; font-size: 1.75rem; font-weight: 800; color: #0f172a; font-family: var(--display);">
             Good day, <?= h(display_name($user)) ?>
-        </h1>
+        </p>
         <p class="lede" style="margin-top: 4px; color: #64748b; font-size: 0.95rem;">
             Every assigned class is listed below. Open a class subject to manage settings, encode, or submit grades.
         </p>

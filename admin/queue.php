@@ -9,32 +9,56 @@ db_or_setup();
 $user = require_portal('admin');
 require_permission($user, 'queue');
 
-$scope = $_GET['scope'] ?? 'mine';
+$scope = $_GET['scope'] ?? 'all';
 $program = (int) ($_GET['program'] ?? 0);
 $search = trim((string) ($_GET['q'] ?? ''));
 
-$isOicOrOsa = in_array('college_oic', $user['roles'], true) || in_array('osa', $user['roles'], true);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_csrf();
+    $subId = (int) ($_POST['submission_id'] ?? 0);
+    $action = (string) ($_POST['action'] ?? 'approve');
+    if ($subId > 0 && in_array($action, ['approve', 'return'], true)) {
+        try {
+            $reviewerRole = in_array('osa', $user['roles'], true) ? 'Secretary' : role_label($user);
+            review_submission($user, $subId, $action, "Approved by {$reviewerRole} from review queue.");
+            flash('ok', 'Class grades submission approved successfully.');
+        } catch (Throwable $e) {
+            flash('error', $e->getMessage());
+        }
+    }
+    redirect('admin/queue.php', ['scope' => $scope, 'program' => $program, 'q' => $search]);
+}
 
 $waiting = [];
-if ($isOicOrOsa || $scope === 'all' || in_array('system_admin', $user['roles'], true)) {
-    // Oversight mode for OIC/OSA: view all active/processed grade submissions
+if ($scope === 'all' || in_array('system_admin', $user['roles'], true)) {
     $waiting = ['submitted', 'returned', 'chair_verified', 'oic_approved', 'osa_endorsed', 'registrar_finalized'];
 } else {
     foreach ([
         'program_chair' => 'submitted',
         'college_oic' => 'chair_verified',
-        'osa' => 'oic_approved',
-        'registrar' => 'osa_endorsed',
+        'osa' => ['submitted', 'chair_verified', 'oic_approved', 'osa_endorsed'],
     ] as $role => $status) {
-        if (in_array($role, $user['roles'], true)) {
+        if (!in_array($role, $user['roles'], true)) {
+            continue;
+        }
+        if (is_array($status)) {
+            foreach ($status as $item) {
+                $waiting[] = $item;
+            }
+        } else {
             $waiting[] = $status;
         }
     }
+    $waiting = array_values(array_unique($waiting));
 }
 
-$programs = db()->query('SELECT id, code FROM programs ORDER BY code')->fetchAll();
+$programs = programs_for_user($user, 'id, code');
+$scopeIds = scoped_program_ids($user);
+if ($program > 0 && is_array($scopeIds) && !in_array($program, $scopeIds, true)) {
+    $program = 0;
+}
 
-$sql = 'SELECT gs.id, gs.status, gs.submitted_at, s.code AS subject_code, s.name AS subject_name,
+$sql = 'SELECT gs.id, gs.status, gs.submitted_at, gs.assignment_id, pa.semester_id, s.code AS subject_code, s.name AS subject_name,
                sec.name AS section_name, p.code AS program_code, p.id AS program_id,
                u.full_name, u.title, COUNT(e.id) AS student_count
         FROM grade_submissions gs
@@ -55,7 +79,6 @@ if ($waiting === []) {
     $params = $waiting;
 }
 
-$scopeIds = scoped_program_ids($user);
 if (is_array($scopeIds)) {
     if ($scopeIds === []) {
         $sql .= ' AND 1 = 0';
@@ -77,41 +100,95 @@ if ($search !== '') {
     $params[] = '%' . $search . '%';
 }
 
-$sql .= ' GROUP BY gs.id, gs.status, gs.submitted_at, s.code, s.name, sec.name, p.code, p.id, u.full_name, u.title
+$sql .= ' GROUP BY gs.id, gs.status, gs.submitted_at, gs.assignment_id, pa.semester_id, s.code, s.name, sec.name, p.code, p.id, u.full_name, u.title
           ORDER BY gs.submitted_at IS NULL, gs.submitted_at DESC, gs.id DESC';
 $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $rows = $stmt->fetchAll();
+
+// Calculate Possible DL and PL candidates per assignment in queue
+$assignmentIds = array_values(array_unique(array_filter(array_column($rows, 'assignment_id'))));
+$classDlPl = [];
+$totalPlQueue = 0;
+$totalDlQueue = 0;
+
+if ($assignmentIds !== []) {
+    $inAssign = implode(',', array_map('intval', $assignmentIds));
+    try {
+        $stmtDlpl = db()->query(
+            "SELECT pa.id AS assignment_id,
+                    COUNT(DISTINCT CASE WHEN ev.status IN ('Possible PL', 'President\'s List', 'PL') THEN e.student_id END) AS pl_count,
+                    COUNT(DISTINCT CASE WHEN ev.status IN ('Possible DL', 'Dean\'s List', 'DL') THEN e.student_id END) AS dl_count
+             FROM professor_assignments pa
+             JOIN enrollments e ON e.assignment_id = pa.id
+             JOIN dl_pl_evaluations ev ON ev.student_id = e.student_id AND ev.semester_id = pa.semester_id
+             WHERE pa.id IN ($inAssign)
+             GROUP BY pa.id"
+        );
+        foreach ($stmtDlpl->fetchAll() as $statRow) {
+            $aid = (int) $statRow['assignment_id'];
+            $classDlPl[$aid] = [
+                'pl' => (int) $statRow['pl_count'],
+                'dl' => (int) $statRow['dl_count'],
+            ];
+        }
+
+        $stmtOg = db()->query(
+            "SELECT pa.id AS assignment_id,
+                    COUNT(DISTINCT CASE WHEN og.final_eqv IS NOT NULL AND og.final_eqv <= 1.25 THEN e.student_id END) AS pl_count,
+                    COUNT(DISTINCT CASE WHEN og.final_eqv IS NOT NULL AND og.final_eqv > 1.25 AND og.final_eqv <= 1.75 THEN e.student_id END) AS dl_count
+             FROM professor_assignments pa
+             JOIN enrollments e ON e.assignment_id = pa.id
+             JOIN official_grades og ON og.enrollment_id = e.id
+             WHERE pa.id IN ($inAssign)
+             GROUP BY pa.id"
+        );
+        foreach ($stmtOg->fetchAll() as $ogRow) {
+            $aid = (int) $ogRow['assignment_id'];
+            $classDlPl[$aid]['pl'] = max($classDlPl[$aid]['pl'] ?? 0, (int) $ogRow['pl_count']);
+            $classDlPl[$aid]['dl'] = max($classDlPl[$aid]['dl'] ?? 0, (int) $ogRow['dl_count']);
+        }
+    } catch (Throwable $e) {
+        // Fallback gracefully if database table not ready
+    }
+
+    foreach ($classDlPl as $counts) {
+        $totalPlQueue += $counts['pl'];
+        $totalDlQueue += $counts['dl'];
+    }
+}
 
 layout_start('Review queue', 'queue', [['label' => 'Review queue']]);
 ?>
 <div class="page-head">
     <div>
         <h1>Review queue</h1>
-        <p class="lede">
-            <?= $isOicOrOsa ? 'Read-only monitoring dashboard for institutional class grade submissions.' : 'Each class grade sheet can move only one step at a time through official review.' ?>
-        </p>
+        <p class="lede">Each class grade sheet can move one step at a time through official review.</p>
     </div>
-    <?php if (in_array('system_admin', $user['roles'], true)): ?>
-        <a class="btn btn-ghost" href="<?= h(url('admin/queue.php', ['scope' => $scope === 'all' ? 'mine' : 'all'])) ?>"><?= $scope === 'all' ? 'Waiting for me' : 'Show more statuses' ?></a>
-    <?php endif; ?>
+    <a class="btn btn-ghost" href="<?= h(url('admin/queue.php', ['scope' => $scope === 'all' ? 'mine' : 'all'])) ?>"><?= $scope === 'all' ? 'Waiting for me' : 'Show all statuses' ?></a>
 </div>
 
-<!-- Queue Summary KPIs -->
 <section class="kpis">
     <article class="kpi">
         <span>Submissions In Queue</span>
         <strong><?= count($rows) ?></strong>
     </article>
     <article class="kpi">
+        <span>Possible PL In Queue</span>
+        <strong style="color: #b45309;"><?= $totalPlQueue ?></strong>
+    </article>
+    <article class="kpi">
+        <span>Possible DL In Queue</span>
+        <strong style="color: #0284c7;"><?= $totalDlQueue ?></strong>
+    </article>
+    <article class="kpi">
         <span>Scope Mode</span>
         <strong style="font-size:18px;">
-            <?= $isOicOrOsa ? 'Monitoring Scope (Read-Only)' : ($scope === 'all' ? 'All System Statuses' : 'Waiting For My Office') ?>
+            <?= $scope === 'all' ? 'All System Statuses' : 'Waiting For My Office' ?>
         </strong>
     </article>
 </section>
 
-<!-- Filter Form with Program & Search Bar -->
 <form class="filters" method="get">
     <input type="hidden" name="scope" value="<?= h((string) $scope) ?>">
     <div>
@@ -137,10 +214,17 @@ layout_start('Review queue', 'queue', [['label' => 'Review queue']]);
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Class / Subject</th><th>Program</th><th>Professor</th><th>Students</th><th>Status</th><th>Submitted</th><th>Action</th></tr>
+                    <tr><th>Class / Subject</th><th>Program</th><th>Professor</th><th>Students</th><th>Possible DL / PL</th><th>Status</th><th>Submitted</th><th>Action</th></tr>
                 </thead>
                 <tbody>
                 <?php foreach ($rows as $row): ?>
+                    <?php
+                    $aid = (int) ($row['assignment_id'] ?? 0);
+                    $pl = $classDlPl[$aid]['pl'] ?? 0;
+                    $dl = $classDlPl[$aid]['dl'] ?? 0;
+                    $asgnMeta = ['id' => $aid, 'program_id' => $row['program_id']];
+                    $canApproveThis = user_can_review($user, $asgnMeta, (string) $row['status']);
+                    ?>
                     <tr>
                         <td>
                             <strong><?= h($row['subject_code']) ?></strong> · <?= h($row['section_name']) ?>
@@ -149,12 +233,38 @@ layout_start('Review queue', 'queue', [['label' => 'Review queue']]);
                         <td><?= h($row['program_code']) ?></td>
                         <td><?= h(trim(($row['title'] ?? '') . ' ' . $row['full_name'])) ?></td>
                         <td><?= (int) $row['student_count'] ?></td>
+                        <td>
+                            <?php if ($pl > 0 || $dl > 0): ?>
+                                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                                    <?php if ($pl > 0): ?>
+                                        <span class="badge badge-gold" title="<?= $pl ?> Possible President's List student(s)"><?= $pl ?> PL</span>
+                                    <?php endif; ?>
+                                    <?php if ($dl > 0): ?>
+                                        <span class="badge badge-info" title="<?= $dl ?> Possible Dean's List student(s)"><?= $dl ?> DL</span>
+                                    <?php endif; ?>
+                                </div>
+                            <?php else: ?>
+                                <span class="hint">—</span>
+                            <?php endif; ?>
+                        </td>
                         <td><?= badge(submission_label($row['status']), $row['status']) ?></td>
                         <td><?= fmt_when($row['submitted_at']) ?></td>
                         <td>
-                            <a class="btn btn-sm <?= $isOicOrOsa ? 'btn-ghost' : '' ?>" href="<?= h(url('admin/review.php', ['id' => $row['id']])) ?>">
-                                <?= icon('open') ?> <?= $isOicOrOsa ? 'View Sheet' : 'Review' ?>
-                            </a>
+                            <div style="display:inline-flex; align-items:center; gap:6px;">
+                                <a class="btn btn-sm btn-ghost" href="<?= h(url('admin/review.php', ['id' => $row['id']])) ?>">
+                                    <?= icon('open') ?> Review
+                                </a>
+                                <?php if ($canApproveThis): ?>
+                                    <form method="post" action="<?= h(url('admin/queue.php', ['scope' => $scope, 'program' => $program, 'q' => $search])) ?>" style="display:inline;" onsubmit="return confirm('Approve submission for <?= h($row['subject_code'] . ' · ' . $row['section_name']) ?>?');">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="submission_id" value="<?= (int) $row['id'] ?>">
+                                        <input type="hidden" name="action" value="approve">
+                                        <button class="btn btn-sm btn-gold" type="submit" title="Quick Approve">
+                                            <?= icon('check') ?> Approve
+                                        </button>
+                                    </form>
+                                <?php endif; ?>
+                            </div>
                         </td>
                     </tr>
                 <?php endforeach; ?>

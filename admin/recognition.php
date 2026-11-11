@@ -14,9 +14,6 @@ if ($actor === '') {
     exit('Your role cannot open this page.');
 }
 
-// College OIC, OSA, and Registrar accounts are strictly monitoring oversight
-$isMonitoringRole = in_array($actor, ['college_oic', 'osa', 'registrar'], true);
-
 $semesterId = (int) ($_GET['semester'] ?? $_POST['semester_id'] ?? 0);
 $semesters = db()->query('SELECT sem.id, sem.name, ay.label, sem.is_current FROM semesters sem JOIN academic_years ay ON ay.id = sem.academic_year_id ORDER BY ay.label DESC')->fetchAll();
 if ($semesterId <= 0) {
@@ -31,7 +28,7 @@ if ($semesterId <= 0) {
 }
 
 $search = trim((string) ($_POST['q'] ?? $_GET['q'] ?? ''));
-$stage = (string) ($_POST['stage'] ?? $_GET['stage'] ?? ($isMonitoringRole ? '' : 'review'));
+$stage = (string) ($_POST['stage'] ?? $_GET['stage'] ?? ($actor === 'program_chair' ? 'review' : ''));
 $allowedStages = ['', 'review', 'endorsed', 'approved', 'returned', 'rejected', 'deferred', 'verified', 'history'];
 if (!in_array($stage, $allowedStages, true)) {
     $stage = '';
@@ -40,16 +37,12 @@ $sort = (($_POST['sort'] ?? $_GET['sort'] ?? '') === 'gwa') ? 'gwa' : 'name';
 $dir = (($_POST['dir'] ?? $_GET['dir'] ?? '') === 'desc') ? 'desc' : 'asc';
 
 if (($_GET['export'] ?? '') === 'csv') {
-    if ($actor !== 'registrar' && !in_array('system_admin', $user['roles'], true)) {
-        http_response_code(403);
-        exit('Only authorized administrative personnel can export the Official Masterlist.');
-    }
     $official = recognition_official($semesterId);
     audit((int) $user['id'], 'recognition_export', 'semester', (string) $semesterId, 'Official Masterlist CSV');
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="official-masterlist.csv"');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['Student number', 'Name', 'Program', 'Year', 'List', 'GWA', 'Endorsed', 'Committee approval', 'OSA', 'Registrar verified']);
+    fputcsv($out, ['Student number', 'Name', 'Program', 'Year', 'List', 'GWA', 'Endorsed', 'Committee approval', 'Secretary', 'Verified']);
     foreach ($official as $row) {
         fputcsv($out, [
             $row['student_number'],
@@ -70,10 +63,6 @@ if (($_GET['export'] ?? '') === 'csv') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
-    if ($isMonitoringRole) {
-        flash('error', 'OIC, OSA, and Registrar accounts have monitoring-only oversight access.');
-        redirect('admin/recognition.php', ['semester' => $semesterId, 'q' => $search, 'stage' => $stage]);
-    }
     $action = (string) ($_POST['action'] ?? '');
     $note = trim((string) ($_POST['note'] ?? ''));
     try {
@@ -89,14 +78,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $done = [
                 'chair_return' => 'Returned ',
                 'chair_reject' => 'Rejected ',
-                'oic_approve' => 'OIC monitoring recorded for ',
-                'oic_return' => 'Returned to the Program Chair ',
-                'oic_reject' => 'OIC rejection recorded for ',
-                'osa_approve' => 'Committee monitoring recorded for ',
-                'osa_reject' => 'Committee rejection recorded for ',
-                'osa_defer' => 'Committee deferral recorded for ',
-                'registrar_verify' => 'Registrar archive verification recorded for ',
-                'registrar_return' => 'Returned to Program Chair ',
             ];
             flash('ok', ($done[$action] ?? 'Updated ') . $moved . ' student' . ($moved === 1 ? '' : 's') . '.');
         }
@@ -129,17 +110,15 @@ $history = recognition_history($caseIds);
 
 $headings = [
     'program_chair' => 'Program Chair Recognition Queue',
-    'college_oic' => display_name($user) . ' · OIC Monitoring Dashboard',
-    'osa' => 'Office of Student Affairs (OSA) Monitoring Dashboard',
-    'registrar' => 'Institutional Recognition Masterlist',
+    'college_oic' => display_name($user) . ' · Recognition Records',
+    'osa' => 'Secretary · Recognition Records',
     'viewer' => 'Recognition Workflow Records',
 ];
 $ledes = [
-    'program_chair' => 'Review and approve system-qualified candidates in your assigned program.',
-    'college_oic' => 'Read-only monitoring dashboard for Dean’s List and President’s List candidate records.',
-    'osa' => 'Read-only oversight portal for Dean’s List and President’s List candidate records.',
-    'registrar' => 'Read-only masterlist archive for officially endorsed and recognized candidates.',
-    'viewer' => 'Each status change stays with the office that owns that step.',
+    'program_chair' => 'Review and approve system-qualified candidates.',
+    'college_oic' => 'Dean’s List and President’s List candidate records for the college.',
+    'osa' => 'Dean’s List and President’s List candidate records for the college.',
+    'viewer' => 'Dean’s List and President’s List candidate records for the college.',
 ];
 
 $nextSort = ['semester' => $semesterId, 'q' => $search, 'stage' => $stage];
@@ -157,20 +136,18 @@ foreach ($rows as $r) {
     }
 }
 
-layout_start('Recognition', 'recognition', [['label' => 'Recognition']]);
+layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['label' => 'Recognition']]);
 ?>
 <div class="page-head">
     <div>
         <h1><?= h($headings[$actor] ?? 'Recognition') ?></h1>
         <p class="lede"><?= h($ledes[$actor] ?? '') ?></p>
     </div>
-    <?php if ($actor === 'registrar' || in_array('system_admin', $user['roles'], true)): ?>
-        <div class="recog-bar">
-            <a class="btn btn-sm" href="<?= h(url('admin/recognition.php', ['semester' => $semesterId, 'export' => 'csv'])) ?>"><?= icon('download') ?> Export masterlist</a>
-            <a class="btn btn-sm" href="<?= h(url('admin/recognition_doc.php', ['semester' => $semesterId, 'doc' => 'masterlist'])) ?>" target="_blank"><?= icon('print') ?> Print masterlist</a>
-            <a class="btn btn-sm" href="<?= h(url('admin/recognition_doc.php', ['semester' => $semesterId, 'doc' => 'certificates'])) ?>" target="_blank"><?= icon('print') ?> Print certificates</a>
-        </div>
-    <?php endif; ?>
+    <div class="recog-bar">
+        <a class="btn btn-sm" href="<?= h(url('admin/recognition.php', ['semester' => $semesterId, 'export' => 'csv'])) ?>"><?= icon('download') ?> Export masterlist</a>
+        <a class="btn btn-sm" href="<?= h(url('admin/recognition_doc.php', ['semester' => $semesterId, 'doc' => 'masterlist'])) ?>" target="_blank"><?= icon('print') ?> Print masterlist</a>
+        <a class="btn btn-sm" href="<?= h(url('admin/recognition_doc.php', ['semester' => $semesterId, 'doc' => 'certificates'])) ?>" target="_blank"><?= icon('print') ?> Print certificates</a>
+    </div>
 </div>
 
 <!-- Recognition Metric Summary -->
@@ -209,7 +186,7 @@ layout_start('Recognition', 'recognition', [['label' => 'Recognition']]);
             <?php
             $tabs = match ($actor) {
                 'program_chair' => ['review' => 'For Review', 'endorsed' => 'Endorsed', 'returned' => 'Returned', 'rejected' => 'Rejected'],
-                'college_oic', 'osa', 'registrar' => ['' => 'All Endorsed Candidates', 'review' => 'In Workflow', 'verified' => 'Official Verified'],
+                'college_oic', 'osa' => ['' => 'All Candidates', 'review' => 'In Workflow', 'endorsed' => 'Endorsed'],
                 default => ['history' => 'All workflow records'],
             };
             ?>
@@ -259,7 +236,7 @@ layout_start('Recognition', 'recognition', [['label' => 'Recognition']]);
                         <br><span class="mono hint"><?= h($row['student_number']) ?></span> 
                         <?= badge((string) $row['student_type'], (string) $row['student_type']) ?>
                     </td>
-                    <td><?= h($row['program_code']) ?><br><span class="hint">Year <?= h((string) $row['year_level']) ?></span></td>
+                    <td><?= h($row['program_code']) ?><br><span class="hint"><?= h((string) $row['year_level']) ?></span></td>
                     <td>
                         <?= $standing !== '' ? badge($standing, $standing) : '—' ?>
                         <div class="hint" style="margin-top:2px;">
@@ -290,7 +267,7 @@ layout_start('Recognition', 'recognition', [['label' => 'Recognition']]);
                     </td>
                     <td>
                         <a class="btn btn-sm btn-ghost" href="<?= h(url('admin/recognition_review.php', ['id' => $caseId])) ?>">
-                            <?= icon('open') ?> <?= $isMonitoringRole ? 'View Record' : 'Review Record' ?>
+                            <?= icon('open') ?> Review Record
                         </a>
                     </td>
                 </tr>

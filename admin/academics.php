@@ -8,12 +8,16 @@ db_or_setup();
 $user = require_portal('admin');
 require_permission($user, 'manage_academics');
 $years = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
+$scope = scoped_program_ids($user);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $action = (string) ($_POST['action'] ?? '');
     try {
         if ($action === 'program') {
+            if (is_array($scope)) {
+                throw new RuntimeException('Program chairs cannot add college-wide programs.');
+            }
             $code = strtoupper(trim((string) ($_POST['code'] ?? '')));
             $name = trim((string) ($_POST['name'] ?? ''));
             if ($code === '' || $name === '') throw new RuntimeException('Enter the program code and name.');
@@ -51,6 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $name = trim((string) ($_POST['name'] ?? ''));
             $programId = (int) ($_POST['program_id'] ?? 0);
             $year = (string) ($_POST['year_level'] ?? '');
+            if (is_array($scope) && !in_array($programId, $scope, true)) {
+                throw new RuntimeException('That program is outside your access.');
+            }
             if ($code === '' || $name === '' || $programId <= 0 || !in_array($year, $years, true)) {
                 throw new RuntimeException('Complete the subject form.');
             }
@@ -61,6 +68,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $programId = (int) ($_POST['program_id'] ?? 0);
             $semesterId = (int) ($_POST['semester_id'] ?? 0);
             $year = (string) ($_POST['year_level'] ?? '');
+            if (is_array($scope) && !in_array($programId, $scope, true)) {
+                throw new RuntimeException('That program is outside your access.');
+            }
             $sem = db()->prepare('SELECT academic_year_id FROM semesters WHERE id = ?');
             $sem->execute([$semesterId]);
             $sem = $sem->fetch();
@@ -78,13 +88,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('admin/academics.php');
 }
 
-$programs = db()->query('SELECT * FROM programs ORDER BY code')->fetchAll();
+$programs = programs_for_user($user, '*');
 $yearRows = db()->query('SELECT * FROM academic_years ORDER BY label DESC')->fetchAll();
 $semesters = db()->query('SELECT sem.*, ay.label FROM semesters sem JOIN academic_years ay ON ay.id = sem.academic_year_id ORDER BY ay.label DESC, sem.name')->fetchAll();
-$subjects = db()->query('SELECT s.*, p.code AS program_code FROM subjects s JOIN programs p ON p.id = s.program_id ORDER BY p.code, s.code')->fetchAll();
-$sections = db()->query('SELECT sec.*, p.code AS program_code, ay.label FROM sections sec JOIN programs p ON p.id = sec.program_id JOIN academic_years ay ON ay.id = sec.academic_year_id ORDER BY p.code, sec.name')->fetchAll();
+$subjectSql = 'SELECT s.*, p.code AS program_code FROM subjects s JOIN programs p ON p.id = s.program_id';
+$sectionSql = 'SELECT sec.*, p.code AS program_code, ay.label FROM sections sec JOIN programs p ON p.id = sec.program_id JOIN academic_years ay ON ay.id = sec.academic_year_id';
+if (is_array($scope)) {
+    $in = $scope === [] ? '0' : implode(',', array_map('intval', $scope));
+    $subjectSql .= ' WHERE s.program_id IN (' . $in . ')';
+    $sectionSql .= ' WHERE sec.program_id IN (' . $in . ')';
+}
+$subjectSql .= ' ORDER BY p.code, s.code';
+$sectionSql .= ' ORDER BY p.code, sec.name';
+$subjects = db()->query($subjectSql)->fetchAll();
+$sections = db()->query($sectionSql)->fetchAll();
 
-layout_start('Academics', 'academics', [['label' => 'Academics']]);
+layout_start('Academic Catalog Management', 'academics', [['label' => 'Academics']]);
 ?>
 <div class="page-head">
     <div>
@@ -113,6 +132,7 @@ layout_start('Academics', 'academics', [['label' => 'Academics']]);
     </article>
 </section>
 
+<?php if ($scope === null): ?>
 <!-- Add Program Card -->
 <section class="card">
     <h2><?= icon('academics') ?> Add Program / Department</h2>
@@ -132,6 +152,7 @@ layout_start('Academics', 'academics', [['label' => 'Academics']]);
         </div>
     </form>
 </section>
+<?php endif; ?>
 
 <!-- Active Programs Grid -->
 <section class="kpis" style="margin-top: 14px; margin-bottom: 20px;">

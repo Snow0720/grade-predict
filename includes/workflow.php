@@ -20,17 +20,17 @@ function role_for_status(string $status): ?string
         'submitted' => 'program_chair',
         'chair_verified' => 'college_oic',
         'oic_approved' => 'osa',
-        'osa_endorsed' => 'registrar',
+        'osa_endorsed' => 'osa',
     ][$status] ?? null;
 }
 
 function user_can_review(array $user, array $assignment, string $status): bool
 {
+    if (in_array('system_admin', $user['roles'], true) || in_array('osa', $user['roles'], true)) {
+        return role_for_status($status) !== null;
+    }
     $role = role_for_status($status);
     if ($role === null || !in_array($role, $user['roles'], true)) {
-        return false;
-    }
-    if ($role === 'program_chair' && !in_array((int) $assignment['program_id'], chair_program_ids($user), true)) {
         return false;
     }
     return true;
