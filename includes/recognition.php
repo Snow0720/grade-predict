@@ -7,14 +7,16 @@ require_once __DIR__ . '/workflow.php';
 
 function recognition_actor(array $user): string
 {
-    foreach (['program_chair', 'college_oic', 'osa'] as $role) {
+    foreach (['program_chair', 'osa'] as $role) {
         if (in_array($role, $user['roles'], true)) {
             return $role;
         }
     }
+
     if (in_array('system_admin', $user['roles'], true)) {
         return 'viewer';
     }
+
     return '';
 }
 
@@ -22,7 +24,13 @@ function recognition_stage_label(string $stage): string
 {
     if (str_ends_with($stage, '_rejected')) return 'Rejected';
     if (str_ends_with($stage, '_returned') || $stage === 'osa_deferred') return 'Returned for Revision';
-    if (in_array($stage, ['chair_endorsed', 'oic_approved', 'osa_approved', 'registrar_verified', 'approved', 'final'], true)) return 'Approved by Chair';
+    if ($stage === 'chair_endorsed') return 'Approved by Chair';
+    if ($stage === 'osa_approved') return 'Endorsed by Secretary';
+
+    if (in_array($stage, ['oic_approved', 'registrar_verified', 'approved', 'final'], true)) {
+        return 'Approved';
+    }   
+    
     return 'Awaiting Chair Review';
 }
 
@@ -32,24 +40,19 @@ function recognition_stage_group(string $actor, string $stage): string
         'program_chair' => [
             'chair_review' => 'review',
             'chair_endorsed' => 'endorsed',
-            'approved' => 'endorsed',
-            'final' => 'endorsed',
+            'osa_approved' => 'endorsed',
             'chair_returned' => 'returned',
             'chair_rejected' => 'rejected',
         ],
-        'college_oic' => [
-            'chair_endorsed' => 'approved',
-            'approved' => 'approved',
-            'final' => 'approved',
-            'chair_review' => 'review',
-        ],
         'osa' => [
-            'chair_endorsed' => 'approved',
-            'approved' => 'approved',
-            'final' => 'approved',
             'chair_review' => 'review',
+            'chair_endorsed' => 'endorsed',
+            'osa_approved' => 'endorsed',
+            'chair_returned' => 'returned',
+            'chair_rejected' => 'rejected',
         ],
     ];
+
     return $groups[$actor][$stage] ?? 'history';
 }
 
@@ -59,7 +62,7 @@ function recognition_workflow_counts(array $rows): array
     foreach ($rows as $row) {
         $stage = empty($row['case_id']) ? '' : (string) ($row['stage'] ?? '');
         $label = match (recognition_stage_label($stage)) {
-            'Approved by Chair' => 'Endorsed',
+            'Approved by Chair', 'Endorsed by Secretary' => 'Endorsed',
             'Rejected' => 'Rejected',
             'Returned for Revision' => 'Returned',
             default => 'For Review',
@@ -153,14 +156,37 @@ function recognition_rows(array $user, int $semesterId, string $search, string $
         $params[] = '%' . $search . '%';
     }
     
+    // Apply only recognized stage filters.
     $actor = recognition_actor($user);
+
+    $stageFilters = [
+        'program_chair' => [
+            'review' => ['chair_review'],
+            'endorsed' => ['chair_endorsed', 'osa_approved'],
+            'returned' => ['chair_returned', 'oic_returned'],
+            'rejected' => ['chair_rejected'],
+        ],
+        'osa' => [
+            'review' => ['chair_review'],
+            'endorsed' => ['chair_endorsed', 'osa_approved'],
+        ],
+    ];
+
+    if (isset($stageFilters[$actor][$stage])) {
+        $allowedStages = $stageFilters[$actor][$stage];
+        $where[] = 'rc.stage IN (' . implode(',', array_fill(0, count($allowedStages), '?')) . ')';
+
+        foreach ($allowedStages as $allowedStage) {
+            $params[] = $allowedStage;
+        }
+    }
     
     // Read-only monitoring roles see all cases
     if (in_array($actor, ['college_oic', 'osa', 'viewer', 'program_chair'], true)) {
         $where[] = 'rc.id IS NOT NULL';
     }
 
-    $order = $sort === 'gwa' ? 'e.gwa' : 'st.full_name';
+    $order = $sort === 'gwa' ? 'COALESCE(rc.gwa, e.gwa)' : 'st.full_name';
     $direction = $dir === 'desc' ? 'DESC' : 'ASC';
     $sql = 'SELECT st.id AS student_id, st.student_number, st.full_name, st.student_type, st.year_level,
             p.code AS program_code, p.name AS program_name,
@@ -265,33 +291,14 @@ function recognition_sync_candidate(int $studentId, int $semesterId): ?int
     return $caseId;
 }
 
-/** Called inside grade approval's transaction; never approves incomplete semester records. */
-function recognition_approve_from_grades(array $user, int $studentId, int $semesterId): ?int
-{
-    $pack = semester_subject_results($studentId, $semesterId, 'official');
-    if (!$pack['complete']) return null;
-    $caseId = recognition_sync_candidate($studentId, $semesterId);
-    if (!$caseId) return null;
-    $query = db()->prepare('SELECT stage, program_id FROM recognition_cases WHERE id = ? FOR UPDATE');
-    $query->execute([$caseId]);
-    $case = $query->fetch();
-    if (!$case || !in_array($case['stage'], ['chair_review', 'chair_returned'], true)) return null;
-    if (!in_array('system_admin', $user['roles'], true)
-        && !in_array((int) $case['program_id'], chair_program_ids($user), true)) return null;
-    $note = 'Automatically approved for recognition after chair approval of complete semester grades.';
-    db()->prepare('UPDATE recognition_cases SET stage = "chair_endorsed", chair_user_id = ?, endorsed_at = NOW(), last_note = ?, required_action = NULL WHERE id = ?')
-        ->execute([(int) $user['id'], $note, $caseId]);
-    db()->prepare('UPDATE dl_pl_evaluations SET status = "Final Approved", is_final = 1, reviewer_id = ? WHERE student_id = ? AND semester_id = ? AND basis = "official"')
-        ->execute([(int) $user['id'], $studentId, $semesterId]);
-    recognition_log($caseId, (int) $user['id'], 'chair_grade_approval', $case['stage'], 'chair_endorsed', $note);
-    return $caseId;
-}
-
 function recognition_endorse(array $user, int $semesterId, array $studentIds, string $note): array
 {
-    if (recognition_actor($user) !== 'program_chair') {
-        throw new RuntimeException('Only a Program Chair can endorse students.');
-    }
+    
+$actor = recognition_actor($user);
+
+if (!in_array($actor, ['program_chair', 'osa'], true)) {
+    throw new RuntimeException('Only the Program Chair or Secretary can endorse students.');
+}
     $ids = array_values(array_unique(array_filter(array_map('intval', $studentIds))));
     if ($ids === []) {
         throw new RuntimeException('Select at least one student.');
@@ -340,22 +347,78 @@ function recognition_endorse(array $user, int $semesterId, array $studentIds, st
             $from = (string) $case['stage'];
             $caseId = (int) $case['id'];
             
-            // Program Chair endorsement directly sets final approval
-            $pdo->prepare(
-                'UPDATE recognition_cases
-                 SET stage = "chair_endorsed", list_type = ?, gwa = ?, standing = ?,
-                     chair_user_id = ?, endorsed_at = NOW(), last_note = ?, required_action = NULL
-                 WHERE id = ? AND stage = ?'
-            )->execute([$list, $student['gwa'], $student['status'], (int) $user['id'], $note !== '' ? $note : null, $caseId, $from]);
+            // Either the Program Chair or Secretary may endorse the candidate.
             
-            // Sync status directly to dl_pl_evaluations
-            $pdo->prepare(
-                'UPDATE dl_pl_evaluations
-                 SET status = "Final Approved", is_final = 1, reviewer_id = ?
-                 WHERE student_id = ? AND semester_id = ? AND basis = "official"'
-            )->execute([(int) $user['id'], $studentId, $semesterId]);
+if ($actor === 'program_chair') {
+    $update = $pdo->prepare(
+        'UPDATE recognition_cases
+         SET stage = "chair_endorsed",
+             list_type = ?,
+             gwa = ?,
+             standing = ?,
+             chair_user_id = ?,
+             endorsed_at = NOW(),
+             last_note = ?,
+             required_action = NULL
+         WHERE id = ? AND stage = ?'
+    );
 
-            recognition_log($caseId, (int) $user['id'], 'endorse', $from, 'chair_endorsed', $note);
+    $update->execute([
+        $list,
+        $student['gwa'],
+        $student['status'],
+        (int) $user['id'],
+        $note !== '' ? $note : null,
+        $caseId,
+        $from
+    ]);
+
+    if ($update->rowCount() !== 1) {
+        throw new RuntimeException('Unable to save the endorsement. Please try again.');
+    }
+    
+} else {
+    $update = $pdo->prepare(
+        'UPDATE recognition_cases
+         SET stage = "osa_approved",
+             list_type = ?,
+             gwa = ?,
+             standing = ?,
+             osa_user_id = ?,
+             osa_at = NOW(),
+             last_note = ?,
+             required_action = NULL
+         WHERE id = ? AND stage = ?'
+    );
+
+    $update->execute([
+        $list,
+        $student['gwa'],
+        $student['status'],
+        (int) $user['id'],
+        $note !== '' ? $note : null,
+        $caseId,
+        $from
+    ]);
+
+    if ($update->rowCount() !== 1) {
+        throw new RuntimeException('Unable to save the endorsement. Please try again.');
+    }
+}
+            
+
+$toStage = $actor === 'program_chair'
+    ? 'chair_endorsed'
+    : 'osa_approved';
+
+recognition_log(
+    $caseId,
+    (int) $user['id'],
+    $actor === 'program_chair' ? 'chair_endorse' : 'secretary_endorse',
+    $from,
+    $toStage,
+    $note
+);
             $endorsed++;
         }
         if ($endorsed === 0) {
@@ -445,7 +508,7 @@ function recognition_add_note(array $user, int $caseId, string $note): void
     }
     $case = recognition_case($caseId, $user);
     $actor = recognition_actor($user);
-    if (!$case || !in_array($actor, ['program_chair', 'college_oic', 'osa'], true)) {
+    if (!$case || !in_array($actor, ['program_chair', 'osa'], true)) {
         throw new RuntimeException('This record is not available for your role.');
     }
     db()->prepare('UPDATE recognition_cases SET last_note = ? WHERE id = ?')->execute([$note, $caseId]);
