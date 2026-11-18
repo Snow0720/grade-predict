@@ -110,7 +110,11 @@ function can(array $user, string $permission): bool
     if (is_view_only_oic($user)) {
         return $permission === 'students_read';
     }
-    if (in_array($permission, ['reports', 'recognition', 'queue'], true) && in_array('osa', $user['roles'] ?? [], true)) {
+    // Secretary (OSA) cannot access Reports or Grade Review Queue.
+    if (
+        in_array($permission, ['reports', 'queue'], true)
+        && in_array('osa', $user['roles'] ?? [], true)
+    ) {
         return false;
     }
     if ($permission === 'reports' && in_array('program_chair', $user['roles'] ?? [], true)) {
