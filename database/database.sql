@@ -32,6 +32,7 @@ DROP TABLE IF EXISTS grading_scale;
 DROP TABLE IF EXISTS enrollments;
 DROP TABLE IF EXISTS professor_assignments;
 DROP TABLE IF EXISTS professors;
+DROP TABLE IF EXISTS student_password_resets;
 DROP TABLE IF EXISTS students;
 DROP TABLE IF EXISTS sections;
 DROP TABLE IF EXISTS subjects;
