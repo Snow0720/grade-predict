@@ -7,14 +7,16 @@ require_once __DIR__ . '/workflow.php';
 
 function recognition_actor(array $user): string
 {
-    foreach (['program_chair', 'college_oic', 'osa'] as $role) {
+    foreach (['program_chair', 'osa'] as $role) {
         if (in_array($role, $user['roles'], true)) {
             return $role;
         }
     }
+
     if (in_array('system_admin', $user['roles'], true)) {
         return 'viewer';
     }
+
     return '';
 }
 
@@ -32,24 +34,17 @@ function recognition_stage_group(string $actor, string $stage): string
         'program_chair' => [
             'chair_review' => 'review',
             'chair_endorsed' => 'endorsed',
-            'approved' => 'endorsed',
-            'final' => 'endorsed',
             'chair_returned' => 'returned',
             'chair_rejected' => 'rejected',
         ],
-        'college_oic' => [
-            'chair_endorsed' => 'approved',
-            'approved' => 'approved',
-            'final' => 'approved',
-            'chair_review' => 'review',
-        ],
         'osa' => [
-            'chair_endorsed' => 'approved',
-            'approved' => 'approved',
-            'final' => 'approved',
             'chair_review' => 'review',
+            'chair_endorsed' => 'endorsed',
+            'chair_returned' => 'returned',
+            'chair_rejected' => 'rejected',
         ],
     ];
+
     return $groups[$actor][$stage] ?? 'history';
 }
 
@@ -289,8 +284,8 @@ function recognition_approve_from_grades(array $user, int $studentId, int $semes
 
 function recognition_endorse(array $user, int $semesterId, array $studentIds, string $note): array
 {
-    if (recognition_actor($user) !== 'program_chair') {
-        throw new RuntimeException('Only a Program Chair can endorse students.');
+    if (!in_array(recognition_actor($user), ['program_chair', 'osa'], true)) {
+        throw new RuntimeException('Only the Program Chair or Secretary can endorse students.');
     }
     $ids = array_values(array_unique(array_filter(array_map('intval', $studentIds))));
     if ($ids === []) {
