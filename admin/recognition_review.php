@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'remark') {
             recognition_add_note($user, $id, $note);
         } elseif ($action === 'chair_endorse') {
-            // Program Chair Endorsement directly approves and finalizes candidate
+            // Program Chair or Secretary endorsement approves the recognition candidate
             recognition_endorse($user, (int) $case['semester_id'], [(int) $case['student_id']], $note);
         } else {
             recognition_act($user, (int) $case['semester_id'], [$id], $action, $note);
@@ -74,31 +74,63 @@ if ($gradeSubmit) {
 }
 
 $steps = [
-    ['Grades Submitted', ['grade_submit'], 'Official subject grades are available.'],
-    ['System Qualification Check', ['system_check'], $case['standing']],
-    ['Awaiting Chair Review', ['endorse', 'chair_grade_approval', 'chair_return', 'chair_reject'], 'Program chair review'],
-    ['Approved by Chair', ['endorse', 'chair_grade_approval'], 'Certificate eligibility confirmed'],
-    ['Final DL / PL Record', ['endorse', 'chair_grade_approval'], 'Official masterlist and certificate record'],
+    [
+        'Grades Submitted',
+        ['grade_submit'],
+        'Official subject grades are available.'
+    ],
+    [
+        'System Qualification Check',
+        ['system_check'],
+        $case['standing']
+    ],
+    [
+        'Recognition Review',
+        ['chair_return', 'chair_reject'],
+        'Candidate reviewed by the authorized office.'
+    ],
+    [
+        'Official Endorsement',
+        ['chair_endorse', 'secretary_endorse'],
+        'Awaiting Program Chair or Secretary endorsement.'
+    ],
+    [
+        'Final DL / PL Record',
+        ['chair_endorse', 'secretary_endorse'],
+        'Official masterlist and certificate eligibility confirmed.'
+    ],
 ];
 
 $actionSets = [
     'program_chair' => [
         'chair_review' => [
-            ['chair_endorse', 'Endorse & Approve Final Record', 'btn-gold'],
+            ['chair_endorse', 'Endorse Candidate', 'btn-gold'],
             ['chair_return', 'Return', 'btn-ghost'],
             ['chair_reject', 'Reject', 'btn-danger'],
         ],
         'chair_returned' => [
-            ['chair_endorse', 'Endorse & Approve Final Record', 'btn-gold'],
+            ['chair_endorse', 'Endorse Candidate', 'btn-gold'],
             ['chair_reject', 'Reject', 'btn-danger'],
         ],
         'oic_returned' => [
-            ['chair_endorse', 'Endorse & Approve Final Record', 'btn-gold'],
+            ['chair_endorse', 'Endorse Candidate', 'btn-gold'],
             ['chair_reject', 'Reject', 'btn-danger'],
         ],
     ],
+
+    'osa' => [
+        'chair_review' => [
+            ['chair_endorse', 'Endorse Candidate', 'btn-gold'],
+        ],
+        'chair_returned' => [
+            ['chair_endorse', 'Endorse Candidate', 'btn-gold'],
+        ],
+        'oic_returned' => [
+            ['chair_endorse', 'Endorse Candidate', 'btn-gold'],
+        ],
+    ],
+
     'college_oic' => [],
-    'osa' => [],
 ];
 
 $actions = $actionSets[$actor][$case['stage']] ?? [];
@@ -126,8 +158,20 @@ layout_start((string) $case['full_name'], 'recognition', [
 <section class="card">
     <h2><?= icon('final') ?> Recommendations and Approvals Status</h2>
     <div class="kpis">
-        <article class="kpi"><span>Program Chair</span><strong style="font-size:16px;"><?= h($case['chair_name'] ?: 'Awaiting Chair Review') ?></strong></article>
-    </div>
+    <article class="kpi">
+        <span>Program Chair</span>
+        <strong style="font-size:16px;">
+            <?= h($case['chair_name'] ?: 'Not yet endorsed') ?>
+        </strong>
+    </article>
+
+    <article class="kpi">
+        <span>Secretary</span>
+        <strong style="font-size:16px;">
+            <?= h($case['osa_name'] ?: 'Not yet endorsed') ?>
+        </strong>
+    </article>
+</div>
     <?php if ($case['last_note']): ?>
         <p style="margin-top:12px;"><strong>Latest Remarks:</strong> <?= h($case['last_note']) ?></p>
     <?php endif; ?>
@@ -183,7 +227,7 @@ layout_start((string) $case['full_name'], 'recognition', [
 
 <?php if ($actions !== []): ?>
 <section class="card">
-    <h2><?= icon('queue') ?> Your Official Action (Program Chair)</h2>
+    <h2><?= icon('queue') ?> Your Official Recognition Action</h2>
     <form method="post">
         <?= csrf_field() ?>
         <input type="hidden" name="id" value="<?= $id ?>">
