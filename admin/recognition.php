@@ -92,18 +92,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('admin/recognition.php', ['semester' => $semesterId, 'q' => $search, 'stage' => $stage, 'sort' => $sort, 'dir' => $dir]);
 }
 
-$scope = scoped_program_ids($user);
-$refreshSql = 'SELECT id FROM students WHERE 1 = 1';
-if (is_array($scope)) {
-    $refreshSql .= $scope === [] ? ' AND 1 = 0' : ' AND program_id IN (' . implode(',', array_map('intval', $scope)) . ')';
-}
-
-// Auto-sync for candidate records
-foreach (db()->query($refreshSql)->fetchAll() as $student) {
-    refresh_student_evaluation((int) $student['id'], $semesterId, (int) $user['id']);
-    recognition_sync_candidate((int) $student['id'], $semesterId);
-}
-
 $rows = recognition_rows($user, $semesterId, $search, $stage, $sort, $dir);
 $caseIds = [];
 foreach ($rows as $row) {
@@ -128,18 +116,31 @@ $ledes = [
 
 $nextSort = ['semester' => $semesterId, 'q' => $search, 'stage' => $stage];
 
-// Calculate summary stats
-$totalVisible = count($rows);
+
+// Calculate summary stats using actual recognition cases.
+$totalCandidates = 0;
 $reviewCount = 0;
+$endorsedCount = 0;
 $verifiedCount = 0;
+
 foreach ($rows as $r) {
-    if (!empty($r['case_id'])) {
-        if ($r['stage'] === 'registrar_verified' || $r['stage'] === 'final' || $r['stage'] === 'chair_endorsed') $verifiedCount++;
-        else $reviewCount++;
-    } else {
+    if (empty($r['case_id'])) {
+        continue;
+    }
+
+    $totalCandidates++;
+
+    $currentStage = (string) ($r['stage'] ?? '');
+
+    if (in_array($currentStage, ['chair_endorsed', 'osa_approved'], true)) {
+        $endorsedCount++;
+    } elseif (in_array($currentStage, ['registrar_verified', 'approved', 'final'], true)) {
+        $verifiedCount++;
+    } elseif (in_array($currentStage, ['chair_review', 'chair_returned', 'oic_returned'], true)) {
         $reviewCount++;
     }
 }
+
 
 layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['label' => 'Recognition']]);
 ?>
@@ -155,20 +156,23 @@ layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['la
     </div>
 </div>
 
+
 <section class="dashboard-grid recognition-charts" aria-label="Candidate overview and workflow status">
-<article class="card recognition-summary-chart">
-    <?php dashboard_horizontal_bars('recognition-summary', 'Candidate Overview', [
-        ['label' => 'Total Candidates', 'count' => $totalVisible],
-        ['label' => 'Pending Review', 'count' => $reviewCount],
-        ['label' => 'Verified Records', 'count' => $verifiedCount],
-    ], ['count' => 'Records'], 'Status'); ?>
-</article>
-<article class="card recognition-workflow-chart workflow-status-chart">
-    <?php dashboard_donut('recognition-workflow', 'Workflow Status', recognition_workflow_counts($rows), [
-        'colors' => ['#38823C', '#285597', '#D9A536', '#B35224', '#7561A5', '#8793A5'],
-    ]); ?>
-</article>
+    <article class="card recognition-summary-chart">
+        <?php dashboard_horizontal_bars('recognition-summary', 'Candidate Overview', [
+            ['label' => 'Total Candidates', 'count' => $totalCandidates],
+            ['label' => 'Pending Review', 'count' => $reviewCount],
+            ['label' => 'Endorsed Records', 'count' => $endorsedCount],
+            ['label' => 'Verified Records', 'count' => $verifiedCount],
+        ], ['count' => 'Records'], 'Status'); ?>
+    </article>
+    <article class="card recognition-workflow-chart workflow-status-chart">
+        <?php dashboard_donut('recognition-workflow', 'Workflow Status', recognition_workflow_counts($rows), [
+            'colors' => ['#38823C', '#285597', '#D9A536', '#B35224', '#7561A5', '#8793A5'],
+        ]); ?>
+    </article>
 </section>
+
 
 <form class="filters" method="get">
         <input type="hidden" name="view" value="recognition">
@@ -232,7 +236,11 @@ layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['la
             <?php foreach ($rows as $row): ?>
                 <?php
                 $caseId = (int) ($row['case_id'] ?? 0);
-                $standing = (string) ($row['standing'] ?? '');
+                $standing = (string) (
+                    $caseId > 0
+                        ? ($row['case_standing'] ?? $row['standing'] ?? '')
+                        : ($row['standing'] ?? '')
+                );
                 $list = $caseId ? (string) $row['list_type'] : (recognition_list_for_standing($standing) ?? '');
                 ?>
                 <tr>
@@ -245,7 +253,12 @@ layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['la
                     <td>
                         <?= $standing !== '' ? badge($standing, $standing) : '—' ?>
                         <div class="hint" style="margin-top:2px;">
-                            <strong><?= h(fmt_eqv(isset($row['gwa']) ? (float) $row['gwa'] : null)) ?></strong>
+                            <strong><?php
+                                    $displayGwa = $caseId > 0
+                                        ? ($row['case_gwa'] ?? $row['gwa'] ?? null)
+                                        : ($row['gwa'] ?? null);
+                                    ?>
+                                    <?= h(fmt_eqv($displayGwa !== null ? (float) $displayGwa : null)) ?></strong>
                             <?= !empty($row['reason']) ? ' · ' . h((string) $row['reason']) : '' ?>
                         </div>
                     </td>
@@ -267,13 +280,17 @@ layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['la
                                 </ul>
                             </details>
                         <?php else: ?>
-                            <?= badge('Pending Chair Verification', 'draft') ?>
+                            <?= badge('Pending Verification', 'draft') ?>
                         <?php endif; ?>
                     </td>
                     <td>
-                        <a class="btn btn-sm btn-ghost" href="<?= h(url('admin/recognition_review.php', ['id' => $caseId])) ?>">
-                            <?= icon('open') ?> Review Record
-                        </a>
+                        <?php if ($caseId > 0): ?>
+                            <a class="btn btn-sm btn-ghost" href="<?= h(url('admin/recognition_review.php', ['id' => $caseId])) ?>">
+                                <?= icon('open') ?> Review Record
+                            </a>
+                        <?php else: ?>
+                            <span class="hint">No recognition record yet</span>
+                        <?php endif; ?>
                     </td>
                 </tr>
             <?php endforeach; ?>
