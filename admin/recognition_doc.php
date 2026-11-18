@@ -40,7 +40,7 @@ audit(
     $doc === 'certificates' ? 'recognition_certificates' : 'recognition_masterlist',
     'semester',
     (string) $semesterId,
-    count($rows) . ' verified students'
+    count($rows) . ' officially recognized students'
 );
 
 $term = $rows[0]['year_label'] ?? '';
@@ -176,7 +176,7 @@ function cert_id(array $row): string
     <div class="gold-label"><?= h($school) ?></div>
     <h1>Official Masterlist</h1>
     <p><strong>Dean’s List and President’s List</strong> · <?= h($termLabel) ?></p>
-    <p>Students listed here are officially endorsed candidates by the Program Chair.</p>
+    <p>Students listed here have been officially endorsed by the Program Chair or Secretary and are recognized as qualified Dean’s List or President’s List awardees.</p>
 
     <?php if ($rows === []): ?>
         <p>No honor students recorded for this semester yet.</p>
