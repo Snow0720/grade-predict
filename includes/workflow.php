@@ -16,11 +16,13 @@ function next_status(string $status, string $action): ?string
     $map = [
         'draft' => ['submit' => 'submitted'],
         'returned' => ['submit' => 'submitted'],
-        'submitted' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
-        'chair_verified' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
-        'oic_approved' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
-        'osa_endorsed' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
+        'submitted' => [
+            'approve' => 'registrar_finalized',
+            'return' => 'returned',
+            'reject' => 'rejected'
+        ],
     ];
+
     return $map[$status][$action] ?? null;
 }
 
@@ -28,9 +30,6 @@ function role_for_status(string $status): ?string
 {
     return [
         'submitted' => 'program_chair',
-        'chair_verified' => 'program_chair',
-        'oic_approved' => 'program_chair',
-        'osa_endorsed' => 'program_chair',
     ][$status] ?? null;
 }
 
@@ -102,7 +101,7 @@ function submit_assignment(array $user, int $assignmentId, array $periods): stri
         throw new RuntimeException('This class is already finalized.');
     }
     $current = (string) ($assignment['submission_status'] ?? 'draft');
-    if (!in_array($current, ['draft', 'returned', 'submitted', 'chair_verified', 'oic_approved', 'osa_endorsed'], true)) {
+    if (!in_array($current, ['draft', 'returned'], true)) {
         throw new RuntimeException('This class cannot be submitted from its current status.');
     }
     $already = submitted_period_keys($assignment);
@@ -143,7 +142,7 @@ function submit_assignment(array $user, int $assignmentId, array $periods): stri
         require_once __DIR__ . '/recognition.php';
         foreach ($book['students'] as $student) {
             refresh_student_evaluation((int) $student['student_id'], (int) $assignment['semester_id'], (int) $user['id']);
-            recognition_sync_candidate((int) $student['student_id'], (int) $assignment['semester_id']);
+            
         }
         $note = 'Submitted ' . $periodLabel . '.';
         $pdo->prepare(
@@ -290,7 +289,12 @@ function lock_official_grades(array $assignment, array $user): void
             $student['remarks'],
         ]);
         refresh_student_evaluation((int) $student['student_id'], (int) $assignment['semester_id'], (int) $user['id']);
-        recognition_approve_from_grades($user, (int) $student['student_id'], (int) $assignment['semester_id']);
+        
+        recognition_sync_candidate(
+            (int) $student['student_id'],
+            (int) $assignment['semester_id']
+        );
+        
     }
 }
 
