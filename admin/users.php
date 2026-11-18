@@ -9,6 +9,12 @@ db_or_setup();
 ensure_student_auth_columns();
 ensure_student_adviser_column();
 $user = require_portal('admin');
+$moduleController = module_controller('admin/users.php', (string) ($_GET['view'] ?? ''));
+if ($moduleController !== null) {
+    require __DIR__ . '/' . $moduleController;
+    return;
+}
+
 require_permission($user, 'manage_users');
 
 $officeRoles = [
@@ -17,18 +23,55 @@ $officeRoles = [
     'college_oic' => 'College OIC',
     'osa' => 'Secretary',
 ];
+$accountScope = scoped_program_ids($user);
+if (is_array($accountScope)) $officeRoles = ['program_chair' => 'Program Chair'];
+$assignableRoles = array_diff_key($officeRoles, ['system_admin' => true]);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $action = (string) ($_POST['action'] ?? '');
     try {
-        if ($action === 'create') {
+        if (is_array($accountScope) && in_array($action, ['create', 'update'], true)) {
+            if (($_POST['role'] ?? '') !== 'program_chair' || !program_in_scope($accountScope, (int) ($_POST['program_id'] ?? 0))) {
+                throw new RuntimeException('Office accounts must belong to your assigned program.');
+            }
+        }
+        if (is_array($accountScope) && in_array($action, ['update', 'toggle'], true)) {
+            $targetRoles = db()->prepare('SELECT r.code, ur.program_id FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = ?');
+            $targetRoles->execute([(int) ($_POST['user_id'] ?? 0)]);
+            $targetRoles = $targetRoles->fetchAll();
+            if ($targetRoles === []) throw new RuntimeException('Account not found.');
+            foreach ($targetRoles as $targetRole) {
+                if ($targetRole['code'] !== 'program_chair' || !program_in_scope($accountScope, (int) $targetRole['program_id'])) {
+                    throw new RuntimeException('This account is outside your assigned program.');
+                }
+            }
+        }
+        if ($action === 'create_professor') {
+            $username = trim((string) ($_POST['username'] ?? ''));
+            $name = trim((string) ($_POST['full_name'] ?? ''));
+            $title = trim((string) ($_POST['title'] ?? ''));
+            $password = (string) ($_POST['password'] ?? '');
+            if ($username === '' || $name === '' || strlen($password) < 8) {
+                throw new RuntimeException('Username, name, and a password of at least 8 characters are required.');
+            }
+            db()->beginTransaction();
+            db()->prepare('INSERT INTO users (username, password_hash, full_name, title, must_change_password) VALUES (?, ?, ?, ?, 1)')
+                ->execute([$username, password_hash($password, PASSWORD_DEFAULT), $name, $title]);
+            $userId = (int) db()->lastInsertId();
+            $roleId = (int) db()->query("SELECT id FROM roles WHERE code = 'professor'")->fetchColumn();
+            db()->prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)')->execute([$userId, $roleId]);
+            db()->prepare('INSERT INTO professors (user_id) VALUES (?)')->execute([$userId]);
+            audit((int) $user['id'], 'account_create', 'user', (string) $userId, 'Professor ' . $username);
+            db()->commit();
+            flash('ok', 'Professor account created. They must change the temporary password upon initial login.');
+        } elseif ($action === 'create') {
             $username = trim((string) ($_POST['username'] ?? ''));
             $name = trim((string) ($_POST['full_name'] ?? ''));
             $role = (string) ($_POST['role'] ?? '');
             $password = (string) ($_POST['password'] ?? '');
             $programId = (int) ($_POST['program_id'] ?? 0);
-            if ($username === '' || $name === '' || !isset($officeRoles[$role]) || strlen($password) < 8) {
+            if ($username === '' || $name === '' || !isset($assignableRoles[$role]) || strlen($password) < 8) {
                 throw new RuntimeException('Complete the account form with a password of at least 8 characters.');
             }
             if ($role === 'program_chair' && $programId <= 0) {
@@ -89,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $professorId = (int) ($_POST['professor_id'] ?? 0);
             $email = normalize_recovery_email((string) ($_POST['email'] ?? ''));
 
-            if ($studentNumber === '' || $name === '' || $programId <= 0 || $year === '') {
+            if ($studentNumber === '' || $name === '' || $programId <= 0 || !in_array($year, ['1st Year', '2nd Year', '3rd Year', '4th Year'], true)) {
                 throw new RuntimeException('Complete the student number, name, program, and year level.');
             }
             if (is_array($scope) && !in_array($programId, $scope, true)) {
@@ -190,47 +233,23 @@ $accounts = db()->query(
      JOIN roles r ON r.id = ur.role_id
      LEFT JOIN programs p ON p.id = ur.program_id
      WHERE r.code <> 'professor'
+     " . (is_array($accountScope) ? ' AND ur.program_id IN (' . ($accountScope === [] ? '0' : implode(',', array_map('intval', $accountScope))) . ')' : '') . "
      ORDER BY u.full_name"
 )->fetchAll();
 
-// Calculate Summary Statistics
-$totalOffice = count($accounts);
-$programChairs = 0;
-$activeOffice = 0;
-foreach ($accounts as $acc) {
-    if ((int)$acc['is_active'] === 1) $activeOffice++;
-    if ($acc['role_code'] === 'program_chair') $programChairs++;
-}
-
-layout_start('Office Accounts Management', 'users', [['label' => 'Office accounts']]);
+layout_start('User Management', 'users', [['label' => 'Office accounts']]);
 ?>
 <div class="page-head">
     <div>
-        <h1>Office Accounts Management</h1>
+        <h1>User Management</h1>
         <p class="lede">Manage office accounts and create student portal accounts. A new student starts with password 123.</p>
     </div>
 </div>
 
-<!-- Summary Metrics Header -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Total Office Accounts</span>
-        <strong><?= $totalOffice ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Active Accounts</span>
-        <strong><?= $activeOffice ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Program Chairs</span>
-        <strong><?= $programChairs ?></strong>
-    </article>
-</section>
-
 <!-- New Office Account Form Card -->
 <section class="card">
     <h2><?= icon('users') ?> New Office Account</h2>
-    <p class="hint">Professors are managed on the Faculty page. These accounts sign in through the college offices portal.</p>
+    <p class="hint">Office accounts sign in through the College Admins portal.</p>
     
     <form method="post" class="form-grid" style="margin-top: 14px;" data-offline-save data-offline-label="New office account">
         <?= csrf_field() ?>
@@ -247,7 +266,7 @@ layout_start('Office Accounts Management', 'users', [['label' => 'Office account
         <div>
             <label for="role">Assigned Role</label>
             <select id="role" name="role">
-                <?php foreach ($officeRoles as $code => $label): ?>
+                <?php foreach ($assignableRoles as $code => $label): ?>
                     <option value="<?= h($code) ?>"><?= h($label) ?></option>
                 <?php endforeach; ?>
             </select>
@@ -271,8 +290,33 @@ layout_start('Office Accounts Management', 'users', [['label' => 'Office account
     </form>
 </section>
 
+    <!-- New Professor Form -->
 <section class="card" style="margin-top: 18px;">
-    <h2><?= icon('students') ?> New Student Portal Account</h2>
+        <h2><?= icon('faculty') ?> New Professor Account</h2>
+        <form method="post" style="margin-top: 12px;" data-offline-save data-offline-label="New professor">
+            <?= csrf_field() ?>
+            <input type="hidden" name="action" value="create_professor">
+            
+            <label for="professor_title">Title / Prefix</label>
+            <input id="professor_title" name="title" value="Mr." required>
+            
+            <label for="professor_full_name">Full Name</label>
+            <input id="professor_full_name" name="full_name" placeholder="e.g. Febrick Quiza" required>
+            
+            <label for="professor_username">System Username</label>
+            <input id="professor_username" name="username" placeholder="e.g. fquiza" required>
+            
+            <label for="professor_password">Temporary Password</label>
+            <input id="professor_password" name="password" type="text" minlength="8" placeholder="At least 8 characters" required>
+            
+            <div style="margin-top: 16px;">
+                <button class="btn btn-gold" type="submit">Create Professor Account</button>
+            </div>
+        </form>
+</section>
+
+<section class="card" style="margin-top: 18px;">
+    <h2 id="new-student-account"><?= icon('students') ?> New Student Portal Account</h2>
     <p class="hint">The student gives you their Gmail or school email. The starting password is 123. They change it after signing in.</p>
     <form method="post" class="form-grid" style="margin-top: 14px;" data-offline-save data-offline-label="New student account">
         <?= csrf_field() ?>
@@ -300,7 +344,12 @@ layout_start('Office Accounts Management', 'users', [['label' => 'Office account
         </div>
         <div>
             <label for="new_year">Year Level</label>
-            <input id="new_year" name="year_level" placeholder="e.g. 4th Year" required>
+            <select id="new_year" name="year_level" required>
+                <option value="" disabled selected>Select year level</option>
+                <?php foreach (['1st Year', '2nd Year', '3rd Year', '4th Year'] as $yearOption): ?>
+                    <option value="<?= h($yearOption) ?>"><?= h($yearOption) ?></option>
+                <?php endforeach; ?>
+            </select>
         </div>
         <div>
             <label for="new_type">Academic Standing Type</label>

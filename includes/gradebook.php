@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/student_feedback.php';
 
 function load_scale(): array
 {
@@ -215,7 +216,7 @@ function offline_gradebook_urls(int $userId): array
 
 function offline_admin_urls(array $user): array
 {
-    $urls = [url('admin/dashboard.php')];
+    $urls = is_view_only_oic($user) ? [] : [url('admin/dashboard.php')];
     if (can($user, 'students_read')) {
         $urls[] = url('admin/students.php');
         $scope = scoped_program_ids($user);
@@ -1054,77 +1055,8 @@ function save_one_score(array $user, array $post): array
 
 function student_subject_risk_explanation(string $subject, string $status, ?float $finalEqv, array $periods, float $disqualifyLine): string
 {
-    $subject = trim($subject) !== '' ? trim($subject) : 'this subject';
-    $join = static function (array $items): string {
-        $items = array_values(array_filter($items, static fn($item) => $item !== ''));
-        if ($items === []) {
-            return '';
-        }
-        if (count($items) === 1) {
-            return $items[0];
-        }
-        $last = array_pop($items);
-        return implode(', ', $items) . ' and ' . $last;
-    };
-    $areas = [
-        'quizzes' => ['noun' => 'quizzes', 'advice' => 'reviewing lessons'],
-        'exam' => ['noun' => 'examinations', 'advice' => 'improving examination performance'],
-        'activities' => ['noun' => 'activities', 'advice' => 'completing activities'],
-        'project' => ['noun' => 'the project', 'advice' => 'completing the project'],
-        'recitation' => ['noun' => 'recitation', 'advice' => 'participating in recitation'],
-        'attendance' => ['noun' => 'attendance', 'advice' => 'attending classes regularly'],
-    ];
-    $weak = [];
-    $strong = [];
-    foreach ($periods as $period) {
-        foreach ($areas as $key => $meta) {
-            $category = $period['categories'][$key] ?? null;
-            if (!is_array($category) || (float) ($category['weight'] ?? 0) <= 0) {
-                continue;
-            }
-            $equivalent = $category['equivalent'] ?? null;
-            if ($equivalent === null || $equivalent === '') {
-                continue;
-            }
-            if ((float) $equivalent >= $disqualifyLine) {
-                $weak[$key] = $meta;
-            } elseif (!isset($weak[$key])) {
-                $strong[$key] = $meta;
-            }
-        }
-    }
-    foreach (array_keys($weak) as $key) {
-        unset($strong[$key]);
-    }
-
-    if ($status === 'Pending') {
-        return 'The student is not yet classified as At Risk or Not at Risk in ' . $subject . ' because the recorded results are still incomplete. The standing will be updated once the remaining scores are encoded.';
-    }
-
-    if ($status === 'At risk') {
-        if ($finalEqv !== null && $finalEqv > 3.0) {
-            $because = 'a failing result in this subject';
-            $advice = ['reviewing lessons', 'completing activities', 'improving examination performance'];
-        } elseif ($weak !== []) {
-            $because = 'low performance in ' . $join(array_column($weak, 'noun'));
-            $advice = array_column($weak, 'advice');
-        } else {
-            $because = 'the recorded results not meeting the required standing';
-            $advice = ['reviewing lessons', 'completing activities', 'improving examination performance'];
-        }
-        return 'The student is currently classified as At Risk in ' . $subject
-            . ' due to ' . $because . '. '
-            . 'The student\'s current academic standing indicates a need for improvement to meet the required grade. '
-            . 'It is recommended that the student focus on ' . $join($advice) . '.';
-    }
-
-    $because = $strong !== []
-        ? 'the recorded results in ' . $join(array_column($strong, 'noun')) . ' meet the required standing'
-        : 'the recorded results meet the required standing';
-    return 'The student is currently classified as Not at Risk in ' . $subject
-        . ' because ' . $because . '. '
-        . 'The student\'s current academic standing qualifies for honor standing. '
-        . 'The student should continue reviewing lessons and completing requirements to keep this result.';
+    $feedback = student_subject_feedback($subject, $status, $finalEqv, $periods, $disqualifyLine);
+    return $feedback['description'] . ' ' . $feedback['recommendation'];
 }
 
 function student_plain_risk(string $label): string
@@ -1362,7 +1294,7 @@ function student_grades_summary(int $studentId, ?int $semesterId = null): array
             }
         }
 
-        $subjectHonorNote = student_subject_risk_explanation(
+        $subjectFeedback = student_subject_feedback(
             (string) $enr['subject_name'],
             student_plain_risk($subjectHonorRisk),
             $finalEqv !== null ? (float) $finalEqv : null,
@@ -1371,6 +1303,7 @@ function student_grades_summary(int $studentId, ?int $semesterId = null): array
         );
 
         $gradesVisible = (int) ($enr['grades_visible'] ?? 0) === 1;
+        $subjectHonorNote = $gradesVisible ? $subjectFeedback['description'] . ' ' . $subjectFeedback['recommendation'] : '';
         if ($gradesVisible) {
             $releasedCount++;
         }
@@ -1392,9 +1325,11 @@ function student_grades_summary(int $studentId, ?int $semesterId = null): array
             'remarks' => $gradesVisible ? $remarks : '',
             'passing_status' => $gradesVisible ? $passingStatus : 'Hidden',
             'passing_badge' => $gradesVisible ? $passingBadge : 'muted',
-            'honor_risk' => student_plain_risk($subjectHonorRisk),
+            'honor_risk' => $gradesVisible ? student_plain_risk($subjectHonorRisk) : 'Hidden',
             'honor_badge' => $subjectHonorBadge,
             'honor_note' => $subjectHonorNote,
+            'performance_description' => $gradesVisible ? $subjectFeedback['description'] : '',
+            'performance_recommendation' => $gradesVisible ? $subjectFeedback['recommendation'] : '',
         ];
     }
 

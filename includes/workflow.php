@@ -1,15 +1,25 @@
 <?php
 declare(strict_types=1);
 
+function ensure_submission_rejected_status(): void
+{
+    $column = db()->query("SHOW COLUMNS FROM grade_submissions LIKE 'status'")->fetch();
+    $type = (string) ($column['Type'] ?? '');
+    if (str_starts_with(strtolower($type), 'enum(') && !str_contains($type, "'rejected'")) {
+        $type = substr($type, 0, -1) . ",'rejected')";
+        db()->exec("ALTER TABLE grade_submissions MODIFY COLUMN status $type NOT NULL DEFAULT 'draft'");
+    }
+}
+
 function next_status(string $status, string $action): ?string
 {
     $map = [
         'draft' => ['submit' => 'submitted'],
         'returned' => ['submit' => 'submitted'],
-        'submitted' => ['approve' => 'chair_verified', 'return' => 'returned'],
-        'chair_verified' => ['approve' => 'oic_approved', 'return' => 'returned'],
-        'oic_approved' => ['approve' => 'osa_endorsed', 'return' => 'returned'],
-        'osa_endorsed' => ['approve' => 'registrar_finalized', 'return' => 'returned'],
+        'submitted' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
+        'chair_verified' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
+        'oic_approved' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
+        'osa_endorsed' => ['approve' => 'registrar_finalized', 'return' => 'returned', 'reject' => 'rejected'],
     ];
     return $map[$status][$action] ?? null;
 }
@@ -18,22 +28,35 @@ function role_for_status(string $status): ?string
 {
     return [
         'submitted' => 'program_chair',
-        'chair_verified' => 'college_oic',
-        'oic_approved' => 'osa',
-        'osa_endorsed' => 'osa',
+        'chair_verified' => 'program_chair',
+        'oic_approved' => 'program_chair',
+        'osa_endorsed' => 'program_chair',
     ][$status] ?? null;
 }
 
 function user_can_review(array $user, array $assignment, string $status): bool
 {
-    if (in_array('system_admin', $user['roles'], true) || in_array('osa', $user['roles'], true)) {
+    if (is_view_only_oic($user)) {
+        return false;
+    }
+    if (in_array('system_admin', $user['roles'], true)) {
         return role_for_status($status) !== null;
     }
     $role = role_for_status($status);
     if ($role === null || !in_array($role, $user['roles'], true)) {
         return false;
     }
-    return true;
+    return in_array((int) ($assignment['program_id'] ?? 0), chair_program_ids($user), true);
+}
+
+function chair_review_status_counts(array $rows): array
+{
+    $counts = ['Approved by Chair' => 0, 'Awaiting Chair Review' => 0, 'Rejected' => 0, 'Returned for Revision' => 0];
+    foreach ($rows as $row) {
+        $label = submission_label((string) ($row['status'] ?? ''));
+        if (isset($counts[$label])) $counts[$label]++;
+    }
+    return $counts;
 }
 
 function snapshot_grades(int $submissionId, int $version, array $book): void
@@ -166,8 +189,8 @@ function review_submission(array $user, int $submissionId, string $action, strin
         throw new RuntimeException('Class not found.');
     }
     $remarks = trim($remarks);
-    if (in_array($action, ['return', 'flag'], true) && $remarks === '') {
-        throw new RuntimeException('A remark is required when you return or flag a submission.');
+    if (in_array($action, ['return', 'flag', 'reject'], true) && $remarks === '') {
+        throw new RuntimeException('A remark is required when you return, reject, or flag a submission.');
     }
     if ($action !== 'flag' && !user_can_review($user, $assignment, $submission['status'])) {
         throw new RuntimeException('Your office cannot take that action on this submission.');
@@ -176,6 +199,7 @@ function review_submission(array $user, int $submissionId, string $action, strin
         throw new RuntimeException('Your office cannot flag this submission.');
     }
 
+    if ($action === 'reject') ensure_submission_rejected_status();
     $pdo = db();
     $pdo->beginTransaction();
     try {
@@ -201,7 +225,7 @@ function review_submission(array $user, int $submissionId, string $action, strin
         )->execute([
             $next,
             $locked,
-            $action === 'return' ? $remarks : null,
+            in_array($action, ['return', 'reject'], true) ? $remarks : null,
             $action,
             $submissionId,
         ]);
@@ -214,6 +238,8 @@ function review_submission(array $user, int $submissionId, string $action, strin
         $label = $assignment['subject_code'] . ' · ' . $assignment['section_name'];
         if ($action === 'return') {
             notify((int) $assignment['professor_user_id'], 'Grades returned', $label . ' was returned. ' . $remarks, 'professor/class.php?id=' . (int) $assignment['id'] . '&view=final');
+        } elseif ($action === 'reject') {
+            notify((int) $assignment['professor_user_id'], 'Grades rejected', $label . ' was rejected by the chair. ' . $remarks, 'professor/class.php?id=' . (int) $assignment['id'] . '&view=final');
         } elseif ($next === 'registrar_finalized') {
             lock_official_grades($assignment, $user);
             notify((int) $assignment['professor_user_id'], 'Grades finalized', $label . ' is now an official record.', 'professor/class.php?id=' . (int) $assignment['id'] . '&view=final');
@@ -264,7 +290,7 @@ function lock_official_grades(array $assignment, array $user): void
             $student['remarks'],
         ]);
         refresh_student_evaluation((int) $student['student_id'], (int) $assignment['semester_id'], (int) $user['id']);
-        recognition_sync_candidate((int) $student['student_id'], (int) $assignment['semester_id']);
+        recognition_approve_from_grades($user, (int) $student['student_id'], (int) $assignment['semester_id']);
     }
 }
 
@@ -286,7 +312,7 @@ function semester_subject_results(int $studentId, int $semesterId, string $basis
     foreach ($rows as $row) {
         if ($basis === 'official') {
             
-if (!in_array((string) $row['status'], ['chair_verified', 'oic_approved', 'osa_endorsed', 'registrar_finalized'], true)) {
+if (!in_array((string) $row['status'], ['registrar_finalized'], true)) {
     $complete = false;
     continue;
 }

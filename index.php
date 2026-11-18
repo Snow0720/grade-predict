@@ -17,7 +17,7 @@ try {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= h(SCHOOL_NAME) ?></title>
-    <link rel="icon" href="<?= h(url('img/logo.png')) ?>">
+    <link rel="icon" type="image/x-icon" href="<?= h(url('img/newest-favicon.ico')) ?>">
     <?php pwa_tags(); ?>
     <link rel="stylesheet" href="<?= h(asset_url('assets/css/app.css')) ?>">
 </head>
@@ -25,7 +25,7 @@ try {
 <main class="gate">
     <section class="gate-card">
         <div class="gate-seal">
-            <img src="<?= h(url('img/logo.png')) ?>" alt="Systems Plus Computer College seal">
+            <img src="<?= h(url('img/Newest Logo.webp')) ?>" alt="Systems Plus Computer College seal">
             <h1>Systems Plus</h1>
             <p>Computer College · <?= h(SCHOOL_ESTABLISHED) ?></p>
         </div>

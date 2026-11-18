@@ -4,10 +4,19 @@ require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/recognition.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/dashboard_charts.php';
 
 db_or_setup();
 $user = require_portal('admin');
+$moduleController = module_controller('admin/dashboard.php', (string) ($_GET['view'] ?? ''));
+if ($moduleController !== null) {
+    require __DIR__ . '/' . $moduleController;
+    return;
+}
+
 $scope = scoped_program_ids($user);
+$isChair = in_array('program_chair', $user['roles'], true);
+$compactDashboard = $isChair || in_array('osa', $user['roles'], true);
 $programSql = '';
 
 if (is_array($scope)) {
@@ -27,7 +36,7 @@ if (is_array($scope)) {
 }
 
 $waiting = [
-    'program_chair' => ['submitted'],
+    'program_chair' => ['submitted', 'chair_verified', 'oic_approved', 'osa_endorsed'],
     'college_oic' => ['chair_verified'],
     'osa' => ['submitted', 'chair_verified', 'oic_approved', 'osa_endorsed'],
 ];
@@ -71,11 +80,30 @@ $recent = [];
 
 $adminStats['students'] = $students;
 $adminStats['professors'] = (int) db()->query('SELECT COUNT(*) FROM professors')->fetchColumn();
+$adminStats['personnel'] = (int) db()->query(
+    "SELECT COUNT(DISTINCT ur.user_id) FROM user_roles ur
+     JOIN roles r ON r.id = ur.role_id
+     WHERE r.code IN ('system_admin', 'program_chair', 'college_oic', 'osa')
+       AND NOT EXISTS (SELECT 1 FROM professors pr WHERE pr.user_id = ur.user_id)"
+)->fetchColumn();
 foreach (['program_chair', 'college_oic', 'osa'] as $role) {
     $stmt = db()->prepare('SELECT COUNT(DISTINCT ur.user_id) FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE r.code = ?');
     $stmt->execute([$role]);
     $adminStats[$role] = (int) $stmt->fetchColumn();
 }
+// Chairs see only faculty and personnel assigned to their own programs.
+if (is_array($scope)) {
+    $scopeList = $scope === [] ? '0' : implode(',', array_map('intval', $scope));
+    $adminStats['professors'] = (int) db()->query(
+        "SELECT COUNT(DISTINCT pa.professor_id) FROM professor_assignments pa
+         JOIN subjects s ON s.id = pa.subject_id WHERE s.program_id IN ($scopeList)"
+    )->fetchColumn();
+    $adminStats['personnel'] = (int) db()->query(
+        "SELECT COUNT(DISTINCT ur.user_id) FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+         WHERE r.code = 'program_chair' AND ur.program_id IN ($scopeList)"
+    )->fetchColumn();
+}
+
 if ($currentSemester > 0) {
     $recogWhere = 'semester_id = ?';
     $recogParams = [$currentSemester];
@@ -134,49 +162,108 @@ if ($currentSemester > 0) {
         }
     } catch (Throwable $e) {}
 }
-$recent = db()->query(
-    'SELECT a.action, a.entity, a.details, a.created_at, u.full_name
-     FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
-     ORDER BY a.id DESC LIMIT 10'
-)->fetchAll();
+$candidatePrograms = programs_for_user($user, 'id, code');
+$candidateRows = [];
+if ($currentSemester > 0) {
+    $candidateSql = 'SELECT st.id AS student_id, st.program_id, e.status, rc.list_type
+        FROM students st
+        LEFT JOIN dl_pl_evaluations e ON e.student_id = st.id AND e.semester_id = ?
+        LEFT JOIN recognition_cases rc ON rc.student_id = st.id AND rc.semester_id = ?
+        WHERE (e.id IS NOT NULL OR rc.id IS NOT NULL)';
+    if (is_array($scope)) {
+        $candidateSql .= $scope === [] ? ' AND 1 = 0' : ' AND st.program_id IN (' . implode(',', array_map('intval', $scope)) . ')';
+    }
+    $candidateStmt = db()->prepare($candidateSql);
+    $candidateStmt->execute([$currentSemester, $currentSemester]);
+    $candidateRows = $candidateStmt->fetchAll();
+}
+$candidateGroups = dashboard_candidate_groups($candidatePrograms, $candidateRows);
 
-layout_start('College offices', 'dash', [['label' => 'Dashboard']]);
+if (!$compactDashboard && can($user, 'audit')) {
+    $recent = db()->query(
+        'SELECT a.action, a.entity, a.details, a.created_at, u.full_name
+         FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
+         ORDER BY a.id DESC LIMIT 10'
+    )->fetchAll();
+}
+
+$population = null;
+if (can($user, 'analytics')) {
+    require_once __DIR__ . '/../includes/dashboard_population.php';
+    $trendProgram = (int) ($_GET['trend_program'] ?? 0);
+    if ($trendProgram > 0 && is_array($scope) && !in_array($trendProgram, $scope, true)) $trendProgram = 0;
+    $trendYear = (string) ($_GET['trend_year_level'] ?? '');
+    if (!in_array($trendYear, ['1st Year', '2nd Year', '3rd Year', '4th Year'], true)) $trendYear = '';
+    $trendSemester = max(0, (int) ($_GET['trend_semester'] ?? 0));
+    $population = dashboard_population_data($scope, $trendProgram, $trendYear, $trendSemester);
+    $trendSemesters = db()->query('SELECT sem.id, sem.name, ay.label FROM semesters sem JOIN academic_years ay ON ay.id = sem.academic_year_id ORDER BY sem.id DESC')->fetchAll();
+}
+
+layout_start('Dashboard', 'dash', [['label' => 'Dashboard']]);
 ?>
 <div class="page-head">
     <div>
-        <h1>College offices</h1>
-        <p class="lede">Manage records and monitor every workflow step. Waiting for your office: <?= $queueCount ?>. Finalized classes: <?= $finalized ?>. Students in scope: <?= $students ?>.</p>
+        <h1>Dashboard</h1>
     </div>
 </div>
 
-<section class="card">
-    <h2><?= icon('reports') ?> Academic & Personnel Overview</h2>
-    <div class="kpis">
-        <article class="kpi"><span>Total Students</span><strong><?= $adminStats['students'] ?></strong></article>
-        <article class="kpi"><span>Faculty / Professors</span><strong><?= $adminStats['professors'] ?></strong></article>
-        <article class="kpi"><span>DL Candidates</span><strong><a href="<?= h(url('admin/evaluations.php', ['standing' => 'dl'])) ?>" style="color:#0284c7;text-decoration:none;" title="View Dean's List Candidates"><?= $adminStats['dl'] ?? 0 ?></a></strong></article>
-        <article class="kpi"><span>PL Candidates</span><strong><a href="<?= h(url('admin/evaluations.php', ['standing' => 'pl'])) ?>" style="color:#b45309;text-decoration:none;" title="View President's List Candidates"><?= $adminStats['pl'] ?? 0 ?></a></strong></article>
-    </div>
-    <div class="kpis" style="margin-top: 12px;">
-        <article class="kpi"><span>Program Chairs</span><strong><?= $adminStats['program_chair'] ?></strong></article>
-        <article class="kpi"><span>College OIC</span><strong><?= $adminStats['college_oic'] ?></strong></article>
-        <article class="kpi"><span>Secretary</span><strong><?= $adminStats['osa'] ?></strong></article>
-        <article class="kpi"><span>Sheets waiting for me</span><strong><?= $queueCount ?></strong></article>
-    </div>
+<div class="dashboard-grid">
+    <section class="card">
+        <?php dashboard_donut('academic-community', 'Academic community', [
+            'Faculty' => $adminStats['professors'],
+            'Personnel' => $adminStats['personnel'],
+            'Students' => $students,
+        ], ['reference_style' => true, 'colors' => ['#38823C', '#B35224', '#285597']]); ?>
+    </section>
+    <section class="card">
+        <?php dashboard_grouped_bars('honor-candidates', 'DL / PL candidates', $candidateGroups, can($user, 'evaluations')); ?>
+    </section>
+    <?php if (!$compactDashboard): ?>
+    <?php if (!in_array('system_admin', $user['roles'], true)): ?>
+    <section class="card">
+        <?php dashboard_bars('office-personnel', 'Office personnel', [
+            'Program Chairs' => $adminStats['program_chair'],
+            'College OIC' => $adminStats['college_oic'], 'Secretary' => $adminStats['osa'],
+        ]); ?>
+    </section>
+    <section class="card">
+        <?php dashboard_bars('submission-progress', 'Grade submissions', [
+            'Waiting for my office' => $queueCount, 'Finalized classes' => $finalized,
+        ], can($user, 'queue') ? ['Waiting for my office' => url('admin/queue.php')] : []); ?>
+    </section>
+    <?php endif; ?>
+    <?php endif; ?>
+</div>
+<?php if ($population !== null): ?>
+<section class="card" id="population-trends">
+    <form class="filters" method="get" action="<?= h(url('admin/dashboard.php#population-trends')) ?>">
+        <div><label for="trend-program">Program</label><select id="trend-program" name="trend_program"><option value="0">All in my scope</option><?php foreach ($candidatePrograms as $item): ?><option value="<?= (int) $item['id'] ?>" <?= $trendProgram === (int) $item['id'] ? 'selected' : '' ?>><?= h($item['code']) ?></option><?php endforeach; ?></select></div>
+        <div><label for="trend-year">Year level</label><select id="trend-year" name="trend_year_level"><option value="">All years</option><?php foreach (['1st Year', '2nd Year', '3rd Year', '4th Year'] as $yearOption): ?><option value="<?= h($yearOption) ?>" <?= $trendYear === $yearOption ? 'selected' : '' ?>><?= h($yearOption) ?></option><?php endforeach; ?></select></div>
+        <div><label for="trend-semester">Semester</label><select id="trend-semester" name="trend_semester"><option value="0">All semesters</option><?php foreach ($trendSemesters as $item): ?><option value="<?= (int) $item['id'] ?>" <?= $trendSemester === (int) $item['id'] ? 'selected' : '' ?>><?= h($item['label'] . ' ' . $item['name']) ?></option><?php endforeach; ?></select></div>
+        <button class="btn btn-sm" type="submit"><?= icon('search') ?> Filter trends</button>
+    </form>
+    <?php dashboard_population_chart($population); ?>
 </section>
+<?php endif; ?>
 
+<?php if (!$compactDashboard && !in_array('system_admin', $user['roles'], true)): ?>
 <section class="card">
     <div class="card-head">
         <h2><?= icon('queue') ?> Recognition Workflow</h2>
-        <a class="btn btn-sm" href="<?= h(url('admin/recognition.php')) ?>">Open all records</a>
+        <?php if (can($user, 'recognition')): ?><a class="btn btn-sm" href="<?= h(url('admin/recognition.php')) ?>">Open records</a><?php endif; ?>
     </div>
-    <div class="kpis">
-        <article class="kpi"><span>Chair Review</span><strong><?= $stageStats['chair_review'] ?? 0 ?></strong></article>
-        <article class="kpi"><span>Endorsed</span><strong><?= $stageStats['chair_endorsed'] ?? 0 ?></strong></article>
-        <article class="kpi"><span>Finalized Records</span><strong><?= ($stageStats['chair_endorsed'] ?? 0) + ($stageStats['registrar_verified'] ?? 0) + ($stageStats['final'] ?? 0) ?></strong></article>
-    </div>
+    <?php
+    $recognitionValues = [];
+    foreach ($stageStats as $stage => $count) {
+        $recognitionValues[recognition_stage_label((string) $stage)] = (int) $count;
+    }
+    if ($recognitionValues === []) $recognitionValues = ['Chair Review' => 0, 'Endorsed' => 0, 'Finalized Records' => 0];
+    dashboard_bars('recognition-stages', 'Records by current stage', $recognitionValues);
+    ?>
 </section>
+<?php endif; ?>
 
+<?php if (!$compactDashboard && can($user, 'audit')): ?>
 <section class="card">
     <div class="card-head">
         <h2><?= icon('audit') ?> Recent System Activities</h2>
@@ -201,4 +288,5 @@ layout_start('College offices', 'dash', [['label' => 'Dashboard']]);
         </table>
     </div>
 </section>
+<?php endif; ?>
 <?php layout_end(); ?>

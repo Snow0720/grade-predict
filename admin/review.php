@@ -63,6 +63,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             review_submission($user, $id, (string) ($_POST['review_action'] ?? ''), (string) ($_POST['remarks'] ?? ''));
             flash('ok', 'Review action recorded successfully.');
+            if (($_POST['review_action'] ?? '') === 'approve') {
+                flash('ok', 'Qualified students with complete approved semester grades are now in Recognition. Their certificates are ready through Print Certificates.');
+                redirect('admin/recognition.php', ['semester' => (int) $assignment['semester_id'], 'stage' => '']);
+            }
         }
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
@@ -327,19 +331,20 @@ layout_start($assignment['subject_code'] . ' · ' . $assignment['section_name'],
         <?= csrf_field() ?>
         <input type="hidden" name="id" value="<?= $id ?>">
         <label for="remarks">Review Remarks / Notes</label>
-        <textarea id="remarks" name="remarks" rows="3" placeholder="Required when returning or flagging for corrections"></textarea>
+        <textarea id="remarks" name="remarks" rows="3" placeholder="Required when returning, rejecting, or flagging for corrections"></textarea>
         <div class="dialog-actions">
             <button class="btn btn-gold" name="review_action" value="approve" type="submit">
-                <?= $submission['status'] === 'osa_endorsed' ? 'Finalize and Lock Class Grades' : 'Approve & Forward to Next Office' ?>
+                Approve & Finalize Class Grades
             </button>
-            <button class="btn btn-ghost" name="review_action" value="return" type="submit">Return to Previous Stage</button>
+            <button class="btn btn-ghost" name="review_action" value="return" type="submit">Return to Professor</button>
+            <button class="btn btn-danger" name="review_action" value="reject" type="submit">Reject</button>
             <button class="btn btn-danger" name="review_action" value="flag" type="submit">Flag Discrepancy</button>
         </div>
     </form>
 </section>
 <?php else: ?>
     <div class="alert alert-info">
-        <strong>Workflow Note:</strong> Review actions for this status belong to another office. You can inspect the computed grades and full audit timeline above.
+        <strong>Workflow Note:</strong> No review action is available for this record. Submitted grades are reviewed by the assigned program chair.
     </div>
 <?php endif; ?>
 

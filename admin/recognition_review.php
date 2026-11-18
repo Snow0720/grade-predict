@@ -76,11 +76,9 @@ if ($gradeSubmit) {
 $steps = [
     ['Grades Submitted', ['grade_submit'], 'Official subject grades are available.'],
     ['System Qualification Check', ['system_check'], $case['standing']],
-    ['Program Chair Review', ['endorse', 'chair_return', 'chair_reject'], 'Program review'],
-    ['Program Chair Endorsement', ['endorse'], 'Final Program Chair approval'],
-    ['College OIC', ['oic_approve', 'oic_return', 'oic_reject', 'endorse'], 'College OIC review'],
-    ['Secretary', ['osa_approve', 'osa_reject', 'osa_defer', 'endorse'], 'Secretary review'],
-    ['Final DL / PL Record', ['endorse'], 'Official masterlist record'],
+    ['Awaiting Chair Review', ['endorse', 'chair_grade_approval', 'chair_return', 'chair_reject'], 'Program chair review'],
+    ['Approved by Chair', ['endorse', 'chair_grade_approval'], 'Certificate eligibility confirmed'],
+    ['Final DL / PL Record', ['endorse', 'chair_grade_approval'], 'Official masterlist and certificate record'],
 ];
 
 $actionSets = [
@@ -128,9 +126,7 @@ layout_start((string) $case['full_name'], 'recognition', [
 <section class="card">
     <h2><?= icon('final') ?> Recommendations and Approvals Status</h2>
     <div class="kpis">
-        <article class="kpi"><span>Program Chair</span><strong style="font-size:16px;"><?= h($case['chair_name'] ?: 'Pending Review') ?></strong></article>
-        <article class="kpi"><span>College OIC</span><strong style="font-size:16px;"><?= h($case['oic_name'] ?: 'Pending') ?></strong></article>
-        <article class="kpi"><span>Secretary</span><strong style="font-size:16px;"><?= h($case['osa_name'] ?: 'Pending') ?></strong></article>
+        <article class="kpi"><span>Program Chair</span><strong style="font-size:16px;"><?= h($case['chair_name'] ?: 'Awaiting Chair Review') ?></strong></article>
     </div>
     <?php if ($case['last_note']): ?>
         <p style="margin-top:12px;"><strong>Latest Remarks:</strong> <?= h($case['last_note']) ?></p>

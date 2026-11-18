@@ -15,14 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string) ($_POST['action'] ?? '');
     try {
         if ($action === 'program') {
-            if (is_array($scope)) {
-                throw new RuntimeException('Program chairs cannot add college-wide programs.');
-            }
-            $code = strtoupper(trim((string) ($_POST['code'] ?? '')));
-            $name = trim((string) ($_POST['name'] ?? ''));
-            if ($code === '' || $name === '') throw new RuntimeException('Enter the program code and name.');
-            db()->prepare('INSERT INTO programs (code, name) VALUES (?, ?)')->execute([$code, $name]);
-            flash('ok', 'Program added successfully.');
+            throw new RuntimeException('Adding programs or departments is not available.');
         } elseif ($action === 'year') {
             $label = trim((string) ($_POST['label'] ?? ''));
             if ($label === '') throw new RuntimeException('Enter the academic year label.');
@@ -34,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'semester') {
             $name = trim((string) ($_POST['name'] ?? ''));
             $yearId = (int) ($_POST['academic_year_id'] ?? 0);
-            if ($name === '' || $yearId <= 0) throw new RuntimeException('Choose a year and name the semester.');
+            if (!in_array($name, ['1st Semester', '2nd Semester'], true) || $yearId <= 0) throw new RuntimeException('Choose an academic year and either 1st Semester or 2nd Semester.');
             if (!empty($_POST['is_current'])) {
                 db()->exec('UPDATE semesters SET is_current = 0');
             }
@@ -112,48 +105,6 @@ layout_start('Academic Catalog Management', 'academics', [['label' => 'Academics
     </div>
 </div>
 
-<!-- Summary Metrics Header -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Academic Programs</span>
-        <strong><?= count($programs) ?></strong>
-    </article>
-    <article class="kpi">
-        <span>School Years</span>
-        <strong><?= count($yearRows) ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Curriculum Subjects</span>
-        <strong><?= count($subjects) ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Configured Sections</span>
-        <strong><?= count($sections) ?></strong>
-    </article>
-</section>
-
-<?php if ($scope === null): ?>
-<!-- Add Program Card -->
-<section class="card">
-    <h2><?= icon('academics') ?> Add Program / Department</h2>
-    <form method="post" class="form-grid" style="margin-top: 12px;" data-offline-save data-offline-label="New program">
-        <?= csrf_field() ?>
-        <input type="hidden" name="action" value="program">
-        <div>
-            <label for="program_code">Program Code</label>
-            <input id="program_code" name="code" placeholder="e.g. BSIT" required>
-        </div>
-        <div>
-            <label for="program_name">Full Program Name</label>
-            <input id="program_name" name="name" placeholder="e.g. Bachelor of Science in Information Technology" required>
-        </div>
-        <div class="wide">
-            <button class="btn btn-gold" type="submit">Add Program</button>
-        </div>
-    </form>
-</section>
-<?php endif; ?>
-
 <!-- Active Programs Grid -->
 <section class="kpis" style="margin-top: 14px; margin-bottom: 20px;">
     <?php foreach ($programs as $program): ?>
@@ -193,7 +144,7 @@ layout_start('Academic Catalog Management', 'academics', [['label' => 'Academics
     </article>
 
     <!-- Semester Card -->
-    <article class="card">
+    <article class="card semester-setup">
         <h2><?= icon('calendar') ?> Semester Setup</h2>
         <form method="post" style="margin-top: 12px;" data-offline-save data-offline-label="New semester">
             <?= csrf_field() ?>
@@ -205,9 +156,13 @@ layout_start('Academic Catalog Management', 'academics', [['label' => 'Academics
                 <?php endforeach; ?>
             </select>
             <label for="sem_name">Semester Name</label>
-            <input id="sem_name" name="name" placeholder="e.g. 1st Semester / 2nd Semester" required>
+            <select id="sem_name" name="name" required>
+                <option value="" disabled selected>Select semester</option>
+                <option value="1st Semester">1st Semester</option>
+                <option value="2nd Semester">2nd Semester</option>
+            </select>
             
-            <div class="form-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-top: 8px;">
+            <div class="semester-deadlines">
                 <div>
                     <label for="prelim_deadline">Prelim Deadline</label>
                     <input id="prelim_deadline" name="prelim_deadline" type="date">
@@ -230,9 +185,9 @@ layout_start('Academic Catalog Management', 'academics', [['label' => 'Academics
             </div>
         </form>
         <hr style="margin: 16px 0; border: 0; border-top: 1px solid var(--border-color, #eee);">
-        <ul style="list-style: none; padding: 0; margin: 0;">
+        <ul class="semester-list">
             <?php foreach ($semesters as $semester): ?>
-                <li style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0;">
+                <li>
                     <span><?= h($semester['label'] . ' · ' . $semester['name']) ?></span>
                     <?= (int) $semester['is_current'] === 1 ? badge('Current Active', 'PASSED') : '' ?>
                 </li>

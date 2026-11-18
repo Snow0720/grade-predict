@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Professor sign in · <?= h(SCHOOL_NAME) ?></title>
-    <link rel="icon" href="<?= h(url('img/logo.png')) ?>">
+    <link rel="icon" type="image/x-icon" href="<?= h(url('img/newest-favicon.ico')) ?>">
     <?php pwa_tags(); ?>
     <link rel="stylesheet" href="<?= h(asset_url('assets/css/app.css')) ?>">
 </head>
@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="auth-shell">
     <aside class="auth-aside">
         <div class="auth-mark">
-            <img src="<?= h(url('img/logo.png')) ?>" alt="School Logo">
+            <img src="<?= h(url('img/Newest Logo.webp')) ?>" alt="School Logo">
             <div>
                 <strong>Systems Plus</strong>
                 <span>Computer College · <?= h(SCHOOL_ESTABLISHED) ?></span>

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/workflow.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/dashboard_charts.php';
 
 db_or_setup();
 $user = require_portal('admin');
@@ -21,7 +22,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $reviewerRole = in_array('osa', $user['roles'], true) ? 'Secretary' : role_label($user);
             review_submission($user, $subId, $action, "Approved by {$reviewerRole} from review queue.");
-            flash('ok', 'Class grades submission approved successfully.');
+            flash('ok', 'Approved by Chair. Qualified students with complete semester grades and their certificates are available in Recognition.');
+            if ($action === 'approve') {
+                $approvedTerm = db()->prepare('SELECT pa.semester_id FROM grade_submissions gs JOIN professor_assignments pa ON pa.id = gs.assignment_id WHERE gs.id = ?');
+                $approvedTerm->execute([$subId]);
+                redirect('admin/recognition.php', ['semester' => (int) $approvedTerm->fetchColumn(), 'stage' => '']);
+            }
         } catch (Throwable $e) {
             flash('error', $e->getMessage());
         }
@@ -31,10 +37,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $waiting = [];
 if ($scope === 'all' || in_array('system_admin', $user['roles'], true)) {
-    $waiting = ['submitted', 'returned', 'chair_verified', 'oic_approved', 'osa_endorsed', 'registrar_finalized'];
+    $waiting = ['submitted', 'returned', 'chair_verified', 'oic_approved', 'osa_endorsed', 'registrar_finalized', 'rejected'];
 } else {
     foreach ([
-        'program_chair' => 'submitted',
+        'program_chair' => ['submitted', 'chair_verified', 'oic_approved', 'osa_endorsed'],
         'college_oic' => 'chair_verified',
         'osa' => ['submitted', 'chair_verified', 'oic_approved', 'osa_endorsed'],
     ] as $role => $status) {
@@ -158,38 +164,37 @@ if ($assignmentIds !== []) {
     }
 }
 
+$reviewStatusCounts = chair_review_status_counts($rows);
+
 layout_start('Review queue', 'queue', [['label' => 'Review queue']]);
 ?>
 <div class="page-head">
     <div>
         <h1>Review queue</h1>
-        <p class="lede">Each class grade sheet can move one step at a time through official review.</p>
+        <p class="lede">Professors submit grades directly to their assigned program chair for review and final approval.</p>
     </div>
     <a class="btn btn-ghost" href="<?= h(url('admin/queue.php', ['scope' => $scope === 'all' ? 'mine' : 'all'])) ?>"><?= $scope === 'all' ? 'Waiting for me' : 'Show all statuses' ?></a>
 </div>
 
-<section class="kpis">
-    <article class="kpi">
-        <span>Submissions In Queue</span>
-        <strong><?= count($rows) ?></strong>
+<section class="dashboard-grid recognition-charts queue-charts" aria-label="Queue overview and chair review status">
+    <article class="card recognition-summary-chart">
+        <?php dashboard_horizontal_bars('queue-overview', 'Queue Overview', [
+            ['label' => 'Awaiting Chair Review', 'count' => $reviewStatusCounts['Awaiting Chair Review']],
+            ['label' => 'Potential PL', 'count' => $totalPlQueue],
+            ['label' => 'Potential DL', 'count' => $totalDlQueue],
+        ], ['count' => 'Count'], 'Queue metric'); ?>
+        <p class="hint">Potential PL and DL counts reflect student entries across the displayed class submissions.</p>
     </article>
-    <article class="kpi">
-        <span>Possible PL In Queue</span>
-        <strong style="color: #b45309;"><?= $totalPlQueue ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Possible DL In Queue</span>
-        <strong style="color: #0284c7;"><?= $totalDlQueue ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Scope Mode</span>
-        <strong style="font-size:18px;">
-            <?= $scope === 'all' ? 'All System Statuses' : 'Waiting For My Office' ?>
-        </strong>
+    <article class="card recognition-workflow-chart">
+        <?php dashboard_donut('chair-review-status', 'Chair Review Status', $reviewStatusCounts, [
+            'colors' => ['#38823C', '#285597', '#D9A536', '#B35224'],
+        ]); ?>
     </article>
 </section>
+<p class="hint">Showing <?= $scope === 'all' ? 'all review statuses' : 'submissions awaiting your review' ?> within your program scope.</p>
 
 <form class="filters" method="get">
+        <input type="hidden" name="view" value="review">
     <input type="hidden" name="scope" value="<?= h((string) $scope) ?>">
     <div>
         <label for="program">Program</label>

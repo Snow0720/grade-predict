@@ -14,7 +14,7 @@ $where = '';
 $params = [];
 
 if ($q !== '') {
-    $where = 'WHERE a.action LIKE ? OR a.entity LIKE ? OR a.details LIKE ? OR u.username LIKE ? OR u.full_name LIKE ?';
+    $where = 'WHERE (a.action LIKE ? OR a.entity LIKE ? OR a.details LIKE ? OR u.username LIKE ? OR u.full_name LIKE ?)';
     $params = array_fill(0, 5, '%' . $q . '%');
 }
 
@@ -113,6 +113,7 @@ layout_start('History Logs', 'audit', [['label' => 'Logs']]);
 
 <section class="card" style="margin-bottom: 18px;">
     <form class="filters" method="get" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+        <input type="hidden" name="view" value="logs">
         <div style="flex: 1; min-width: 280px;">
             <label for="q">Search History Logs</label>
             <input id="q" name="q" value="<?= h($q) ?>" placeholder="Action, user, record, or details..." style="width: 100%;">
@@ -169,7 +170,7 @@ layout_start('History Logs', 'audit', [['label' => 'Logs']]);
                             if (in_array($act, ['login', 'logout', 'import', 'scholarship_assign', 'scholarship_revoke'], true)): ?>
                                 <?= badge($act, $act) ?>
                             <?php else: ?>
-                                <span class="badge" style="background: #f0f4f8; color: #102a43; font-weight: 600;"><?= h($act) ?></span>
+                                <span class="badge" style="background: var(--theme-raised, #f0f4f8); color: var(--ink, #102a43); font-weight: 600;"><?= h($act) ?></span>
                             <?php endif; ?>
                         </td>
                         <td><span class="mono"><?= h($row['entity']) ?> <?= h((string) $row['entity_id']) ?></span></td>
@@ -213,7 +214,7 @@ layout_start('History Logs', 'audit', [['label' => 'Logs']]);
     function rowHtml(row) {
         const actionHtml = row.badge
             ? '<span class="badge badge-info">' + esc(row.action) + '</span>'
-            : '<span class="badge" style="background:#f0f4f8;color:#102a43;font-weight:600;">' + esc(row.action) + '</span>';
+            : '<span class="badge" style="background:var(--theme-raised, #f0f4f8);color:var(--ink, #102a43);font-weight:600;">' + esc(row.action) + '</span>';
         const userHtml = '<strong>' + esc(row.name) + '</strong>'
             + (row.username
                 ? '<br><span class="mono" style="font-size:12px;color:var(--text-muted,#666);">' + esc(row.username) + '</span>'
@@ -231,7 +232,7 @@ layout_start('History Logs', 'audit', [['label' => 'Logs']]);
         if (document.hidden || page !== 1) return;
         try {
             const url = feedUrl
-                + '?live=1&after=' + encodeURIComponent(String(after))
+                + (feedUrl.includes('?') ? '&' : '?') + 'live=1&after=' + encodeURIComponent(String(after))
                 + '&q=' + encodeURIComponent(query);
             const response = await fetch(url, {
                 credentials: 'same-origin',

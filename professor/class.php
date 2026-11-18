@@ -186,10 +186,15 @@ layout_start(
         'items' => $sideItems,
     ]
 );
+$tone = [
+    'attendance' => 'att',
+    'recitation' => 'rec',
+    'activities' => 'act',
+    'quizzes' => 'quiz',
+    'project' => 'proj',
+    'exam' => 'exam',
+];
 require __DIR__ . '/views/class_head.php';
-if (($user['portal'] ?? '') === 'professor' && $view === 'sheet') {
-    require __DIR__ . '/views/release.php';
-}
 if ($view === 'summary') {
     require __DIR__ . '/views/summary.php';
 } elseif ($view === 'final') {
@@ -200,6 +205,9 @@ if ($view === 'summary') {
     require __DIR__ . '/views/equivalent.php';
 } else {
     require __DIR__ . '/views/sheet.php';
+}
+if (($user['portal'] ?? '') === 'professor' && $view === 'sheet') {
+    require __DIR__ . '/views/release.php';
 }
 layout_end('assets/js/gradebook.js');
 

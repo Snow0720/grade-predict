@@ -1,15 +1,6 @@
 <?php
 declare(strict_types=1);
 
-$tone = [
-    'attendance' => 'att',
-    'recitation' => 'rec',
-    'activities' => 'act',
-    'quizzes'    => 'quiz',
-    'project'    => 'proj',
-    'exam'       => 'exam',
-];
-
 $periodData = $book['items'][$period] ?? [];
 $visible = [];
 $shareCatalog = [];
@@ -78,9 +69,9 @@ if (!function_exists('clean_pct')) {
     font-weight: 700;
 }
 .score {
-    background-color: #fff;
+    background-color: var(--theme-surface, #fff);
     border: 1px solid #D5CFC4;
-    color: #1A2332;
+    color: var(--ink, #1A2332);
     font-weight: 700;
     border-radius: 6px;
     text-align: center;
@@ -91,13 +82,13 @@ if (!function_exists('clean_pct')) {
     outline: none;
     border-color: #B7A06A;
     box-shadow: 0 0 0 3px rgba(183, 160, 106, 0.28);
-    background-color: #fff;
+    background-color: var(--theme-surface, #fff);
 }
 
 .empty-state-banner {
-    background-color: #f1f5f9;
+    background-color: var(--theme-raised, #f1f5f9);
     border: 1px dashed #cbd5e1;
-    color: #475569;
+    color: var(--ink, #475569);
     font-weight: 600;
     text-align: center;
     padding: 16px;
@@ -162,7 +153,7 @@ if (!function_exists('clean_pct')) {
                 <tbody>
                 <?php if ($book['students'] === []): ?>
                     <tr>
-                        <td class="sticky text-center py-4 text-muted fw-semibold" colspan="40" style="background: #f8fafc;">
+                        <td class="sticky text-center py-4 text-muted fw-semibold" colspan="40" style="background: var(--theme-surface, #f8fafc);">
                             No students are enrolled in this class yet.
                         </td>
                     </tr>

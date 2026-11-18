@@ -49,7 +49,7 @@ $remainingReady = $openPeriods !== [] && array_reduce($openPeriods, static fn (b
         </div>
         <dialog id="submitDialog">
             <h3 style="margin-top:0;">Submit these grades?</h3>
-            <p id="submitDialogText" style="color:#5C6B7A;">The Program Chair will receive the periods you chose.</p>
+            <p id="submitDialogText" style="color:var(--muted, #5C6B7A);">The Program Chair will receive the periods you chose.</p>
             <form method="post" action="<?= h(url('professor/class.php', sheet_query(['id' => $assignment['id'], 'view' => $view, 'period' => $period]))) ?>">
                 <?= csrf_field() ?>
                 <input type="hidden" name="assignment_id" value="<?= (int) $assignment['id'] ?>">

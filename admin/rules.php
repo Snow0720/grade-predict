@@ -101,6 +101,7 @@ layout_start('DL / PL Qualification Criteria', 'rules', [['label' => 'DL / PL cr
 
 <!-- Term Filter Toolbar -->
 <form class="filters" method="get">
+        <input type="hidden" name="view" value="criteria">
     <div>
         <label for="semester">Target Semester Term</label>
         <select id="semester" name="semester">

@@ -1,15 +1,6 @@
 <?php
 declare(strict_types=1);
 
-$tone = [
-    'attendance' => 'att',
-    'recitation' => 'rec',
-    'activities' => 'act',
-    'quizzes'    => 'quiz',
-    'project'    => 'proj',
-    'exam'       => 'exam',
-];
-
 if (!function_exists('clean_pct')) {
     function clean_pct(mixed $val): string {
         if ($val === null || $val === '') return '—';

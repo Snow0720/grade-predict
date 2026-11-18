@@ -39,7 +39,7 @@ layout_start('Grade Equivalent Scale', 'scale', [['label' => 'Grade equivalent']
     <form method="post">
         <?= csrf_field() ?>
         <div class="table-wrap" style="margin-top: 12px;">
-            <table>
+            <table class="grade-scale-table">
                 <thead>
                     <tr>
                         <th>Min %</th>

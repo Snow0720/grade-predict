@@ -1,4 +1,29 @@
 (function () {
+    document.querySelectorAll('.community-donut').forEach(function (chart) {
+        const tooltip = chart.querySelector('.chart-hover-detail');
+        if (!tooltip) return;
+        chart.querySelectorAll('.donut-segment').forEach(function (segment) {
+            function show(event) {
+                tooltip.textContent = segment.dataset.chartDetail;
+                tooltip.hidden = false;
+                const rect = chart.getBoundingClientRect();
+                const x = event && Number.isFinite(event.clientX) ? event.clientX - rect.left + 14 : (rect.width - tooltip.offsetWidth) / 2;
+                const y = event && Number.isFinite(event.clientY) ? event.clientY - rect.top - tooltip.offsetHeight - 12 : 8;
+                tooltip.style.left = Math.max(8, Math.min(x, rect.width - tooltip.offsetWidth - 8)) + 'px';
+                tooltip.style.top = Math.max(8, Math.min(y, rect.height - tooltip.offsetHeight - 8)) + 'px';
+            }
+            function hide() { tooltip.hidden = true; }
+            segment.addEventListener('pointerenter', show);
+            segment.addEventListener('pointermove', show);
+            segment.addEventListener('pointerleave', hide);
+            segment.addEventListener('focus', function () { show(); });
+            segment.addEventListener('blur', hide);
+            segment.addEventListener('keydown', function (event) { if (event.key === 'Escape') hide(); });
+        });
+    });
+})();
+
+(function () {
     const query = window.matchMedia('(max-width: 760px)');
     function pinSheetHead() {
         document.querySelectorAll('.grade-grid').forEach(function (grid) {
@@ -16,20 +41,7 @@
     if (query.addEventListener) query.addEventListener('change', pinSheetHead);
 })();
 
-(function () {
-    const toggle = document.getElementById('navToggle');
-    const scrim = document.getElementById('navScrim');
-    function closeNav() { document.body.classList.remove('nav-open'); }
-    if (toggle) {
-        toggle.addEventListener('click', function () {
-            document.body.classList.toggle('nav-open');
-        });
-    }
-    if (scrim) scrim.addEventListener('click', closeNav);
-    document.querySelectorAll('.sidenav a').forEach(function (link) {
-        link.addEventListener('click', closeNav);
-    });
-})();
+
 
 (function () {
     const tip = document.createElement('div');
@@ -369,6 +381,8 @@ function toast(message, type) {
 
     function queryString() {
         const params = new URLSearchParams();
+        const moduleView = form.querySelector('input[name="view"]');
+        if (moduleView) params.set('view', moduleView.value);
         const typed = search ? search.value.trim() : '';
         if (typed !== '') params.set('q', typed);
         if (program && program.value !== '0') params.set('program', program.value);
@@ -466,4 +480,127 @@ function toast(message, type) {
         event.preventDefault();
         schedule(true);
     });
+})();
+(function () {
+    const center = document.querySelector('[data-notifications]');
+    if (!center) return;
+    const toggle = center.querySelector('[data-notification-toggle]');
+    const panel = center.querySelector('.notification-panel');
+    const list = center.querySelector('.notification-list');
+    const status = center.querySelector('.notification-status');
+    const badge = center.querySelector('[data-notification-count]');
+    const all = center.querySelector('[data-notification-all]');
+    const more = center.querySelector('.notification-more');
+    const scroller = center.querySelector('.notification-scroll');
+    let filter = 'all', limit = 30, busy = false;
+    function close() {
+        panel.hidden = true;
+        toggle.setAttribute('aria-expanded', 'false');
+    }
+    function node(tag, className, value) {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        if (value !== undefined) el.textContent = value;
+        return el;
+    }
+    function render(data) {
+        const position = scroller.scrollTop;
+        list.replaceChildren();
+        data.rows.forEach(function (row) {
+            const item = node('li', 'notification-item' + (row.is_read ? '' : ' is-unread'));
+            const title = node(row.url ? 'a' : 'strong', '', row.title);
+            if (row.url) {
+                title.href = row.url;
+                title.addEventListener('click', async function (event) {
+                    event.preventDefault();
+                    if (busy) return;
+                    if (row.is_read || await request('mark_read', row.id)) window.location.assign(row.url);
+                });
+            }
+            item.append(title, node('p', '', row.body));
+            const footer = node('div', 'notification-item-footer');
+            const button = node('button', 'btn btn-ghost btn-sm', row.is_read ? 'Mark as unread' : 'Mark as read');
+            button.type = 'button';
+            button.addEventListener('click', function () { request(row.is_read ? 'mark_unread' : 'mark_read', row.id); });
+            footer.append(node('small', '', row.when), button);
+            item.append(footer);
+            list.append(item);
+        });
+        badge.textContent = data.unread > 99 ? '99+' : String(data.unread);
+        badge.hidden = data.unread === 0;
+        toggle.setAttribute('aria-label', 'Notifications, ' + data.unread + ' unread');
+        all.disabled = data.unread === 0;
+        more.hidden = !data.has_more;
+        status.textContent = data.rows.length ? '' : (filter === 'unread' ? 'You’re all caught up. No unread notifications.' : 'No notifications yet.');
+        scroller.scrollTop = position;
+    }
+    async function request(action, id) {
+        if (busy) return false;
+        busy = true;
+        panel.setAttribute('aria-busy', 'true');
+        const focus = document.activeElement;
+        const focusedItem = focus && focus.closest('.notification-item');
+        const focusIndex = focusedItem ? Array.from(list.children).indexOf(focusedItem) : -1;
+        center.querySelectorAll('button').forEach(function (button) { if (button !== toggle && !button.hasAttribute('data-notification-close')) button.setAttribute('aria-disabled', 'true'); });
+        status.textContent = action ? 'Updating…' : 'Loading notifications…';
+        try {
+            const target = new URL(center.dataset.endpoint, window.location.href);
+            // Select the correct isolated session cookie, including for older cached layouts.
+            const page = new URL(window.location.href);
+            const portal = center.dataset.portal || (page.pathname.includes('/admin/') || page.searchParams.get('side') === 'admin' ? 'admin' : 'professor');
+            target.searchParams.set('side', portal);
+            target.searchParams.set('filter', filter);
+            target.searchParams.set('limit', limit);
+            const options = { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } };
+            if (action) {
+                options.method = 'POST';
+                options.body = new URLSearchParams({ action: action, notification_id: id || '', csrf_token: center.dataset.csrf });
+            }
+            const response = await fetch(target, options);
+            const data = await response.json();
+            if (!response.ok || !data.ok) throw new Error(data.message || 'Unable to load notifications.');
+            render(data);
+            if (focusIndex >= 0 && !panel.hidden) {
+                const nextItem = list.children[Math.min(focusIndex, list.children.length - 1)];
+                (nextItem ? nextItem.querySelector('button') : center.querySelector('[data-notification-filter="unread"]')).focus({ preventScroll: true });
+            }
+            return true;
+        } catch (error) {
+            status.textContent = navigator.onLine ? (error.message === 'Failed to fetch' ? 'Could not load notifications. Close and reopen to try again.' : error.message) : 'You’re offline. Reconnect and reopen notifications.';
+            return false;
+        } finally {
+            busy = false;
+            panel.removeAttribute('aria-busy');
+            center.querySelectorAll('button').forEach(function (button) { button.removeAttribute('aria-disabled'); });
+            all.disabled = Number(badge.textContent) === 0;
+        }
+    }
+    toggle.addEventListener('click', function () {
+        if (!panel.hidden) return close();
+        panel.hidden = false;
+        toggle.setAttribute('aria-expanded', 'true');
+        request();
+        center.querySelector('[data-notification-close]').focus();
+    });
+    center.querySelector('[data-notification-close]').addEventListener('click', function () { close(); toggle.focus(); });
+    document.addEventListener('click', function (event) { if (!center.contains(event.target)) close(); });
+    document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && !panel.hidden) { close(); toggle.focus(); } });
+    center.addEventListener('focusout', function () { setTimeout(function () { if (!center.contains(document.activeElement)) close(); }, 0); });
+    center.querySelectorAll('[data-notification-filter]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            if (busy) return;
+            filter = button.dataset.notificationFilter;
+            limit = 30;
+            scroller.scrollTop = 0;
+            center.querySelectorAll('[data-notification-filter]').forEach(function (tab) {
+                const selected = tab === button;
+                tab.setAttribute('aria-pressed', String(selected));
+                tab.classList.toggle('btn-ghost', !selected);
+            });
+            request();
+        });
+    });
+    all.addEventListener('click', function () { request('mark_all_read'); });
+    more.addEventListener('click', function () { if (!busy) { limit += 30; request(); } });
+    if (new URLSearchParams(window.location.search).get('notifications') === 'open') toggle.click();
 })();

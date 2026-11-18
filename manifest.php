@@ -16,22 +16,22 @@ echo json_encode([
     'display' => 'standalone',
     'orientation' => 'any',
     'background_color' => '#F3F1EB',
-    'theme_color' => '#142B49',
+    'theme_color' => '#000058',
     'icons' => [
         [
-            'src' => url('img/icon-192.png'),
+            'src' => url('img/newest-icon-192.png'),
             'sizes' => '192x192',
             'type' => 'image/png',
             'purpose' => 'any',
         ],
         [
-            'src' => url('img/icon-512.png'),
+            'src' => url('img/newest-icon-512.png'),
             'sizes' => '512x512',
             'type' => 'image/png',
             'purpose' => 'any',
         ],
         [
-            'src' => url('img/icon-512.png'),
+            'src' => url('img/newest-icon-maskable-512.png'),
             'sizes' => '512x512',
             'type' => 'image/png',
             'purpose' => 'maskable',

@@ -43,21 +43,21 @@ if (!function_exists('clean_pct')) {
 
 /* Data Cells Styling */
 .grade-grid td {
-    border: 1px solid #e2e8f0 !important;
+    border: 1px solid var(--line) !important;
     padding: 10px 8px !important;
     font-size: 0.88rem !important;
 }
 .grade-grid tbody tr:hover {
-    background-color: #f8fafc !important;
+    background-color: var(--theme-surface, #f8fafc) !important;
 }
 
 td.predicted-cell small,
-td.predicted-cell .small { color: #5C6B7A; }
+td.predicted-cell .small { color: var(--muted, #5C6B7A); }
 
 .period-grade-head {
     text-align: center;
-    background: #E8EEF6;
-    color: #142B49;
+    background: var(--theme-raised, #E8EEF6);
+    color: var(--ink, #142B49);
     letter-spacing: .04em;
     text-transform: uppercase;
 }
@@ -66,7 +66,7 @@ td.predicted-cell .small { color: #5C6B7A; }
     font-weight: 600;
     letter-spacing: 0;
     text-transform: none;
-    color: #5C6B7A;
+    color: var(--muted, #5C6B7A);
 }
 .overall-grade-head {
     text-align: center;
@@ -84,19 +84,19 @@ td.predicted-cell .small { color: #5C6B7A; }
 }
 td.period-pct, td.period-eqv, td.period-remarks {
     text-align: center;
-    background: #F8FAFC;
+    background: var(--theme-surface, #F8FAFC);
 }
 td.overall-pct, td.overall-eqv {
     text-align: center;
     font-weight: 800;
     background: #E7DCC4;
-    color: #142B49;
+    color: var(--ink, #142B49);
 }
 
 /* Predicted Cells */
 td.predicted-cell {
-    background-color: #f8fafc !important;
-    color: #475569 !important;
+    background-color: var(--theme-surface, #f8fafc) !important;
+    color: var(--ink, #475569) !important;
     text-align: center !important;
 }
 
@@ -112,7 +112,7 @@ td.predicted-cell {
     width: 90%;
     max-width: 480px;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-    background: #ffffff;
+    background: var(--theme-surface, #ffffff);
     margin: 0;
 }
 
@@ -129,7 +129,7 @@ td.predicted-cell {
             <table class="grade-grid w-100">
                 <thead>
                     <tr>
-                        <th class="sticky col-num" rowspan="2" style="width: 40px; text-align: center;"><span class="sticky-label">#</span></th>
+                        <th class="sticky col-num" rowspan="2" style="width: 40px; text-align: left;"><span class="sticky-label">#</span></th>
                         <th class="sticky col-sn" rowspan="2" style="width: 130px;"><span class="sticky-label">Student number</span></th>
                         <th class="sticky col-name" rowspan="2"><span class="sticky-label">Student name</span></th>
                         <?php foreach (PERIODS as $key => $label): ?>

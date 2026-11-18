@@ -100,7 +100,7 @@ layout_start('My Grades & Academic Standing', 'grades', [
     <div class="card-head">
         <h2>
             <?= icon('award') ?>
-            <span>Honor List Standing Monitor (Dean’s / President’s List Eligibility)</span>
+            <span>Honor Standing</span>
         </h2>
     </div>
 
@@ -109,15 +109,15 @@ layout_start('My Grades & Academic Standing', 'grades', [
     $gradesOpen = !empty($summary['grades_open']);
     ?>
     <?php if ($plainStanding === 'At risk'): ?>
-        <div style="padding: 16px 20px; border-radius: 12px; background: #FFF7ED; border-left: 5px solid var(--warn); margin-bottom: 18px;">
+        <div style="padding: 16px 20px; border-radius: 12px; background: var(--theme-raised, #FFF7ED); border-left: 5px solid var(--warn); margin-bottom: 18px;">
             <span class="badge badge-warn" style="font-size: 13px;">At risk</span>
         </div>
     <?php elseif ($plainStanding === 'Not at risk'): ?>
-        <div style="padding: 16px 20px; border-radius: 12px; background: #F0FDF4; border-left: 5px solid var(--ok); margin-bottom: 18px;">
+        <div style="padding: 16px 20px; border-radius: 12px; background: var(--theme-raised, #F0FDF4); border-left: 5px solid var(--ok); margin-bottom: 18px;">
             <span class="badge badge-ok" style="font-size: 13px;">Not at risk</span>
         </div>
     <?php else: ?>
-        <div style="padding: 16px 20px; border-radius: 12px; background: #F0F9FF; border-left: 5px solid var(--info); margin-bottom: 18px;">
+        <div style="padding: 16px 20px; border-radius: 12px; background: var(--theme-raised, #F0F9FF); border-left: 5px solid var(--info); margin-bottom: 18px;">
             <span class="badge badge-info" style="font-size: 13px;">Pending</span>
         </div>
     <?php endif; ?>
@@ -178,8 +178,8 @@ layout_start('My Grades & Academic Standing', 'grades', [
                         <th>Midterm</th>
                         <th>Finals</th>
                         <th>Final Grade</th>
-                        <th style="text-align:center;">Subject Result</th>
-                        <th style="text-align:right;">Details</th>
+                        <th style="text-align: left;">Subject Result</th>
+                        <th style="text-align: left;">Details</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -244,8 +244,11 @@ layout_start('My Grades & Academic Standing', 'grades', [
                             $subjectRiskBadge = $subjectRisk === 'At risk' ? 'warn' : ($subjectRisk === 'Not at risk' ? 'ok' : 'info');
                             ?>
                             <span class="badge badge-<?= h($subjectRiskBadge) ?>" style="font-size:12px; padding:4px 9px;"><?= h($subjectRisk) ?></span>
-                            <?php if (trim((string) ($class['honor_note'] ?? '')) !== ''): ?>
-                                <p class="hint" style="margin:8px 0 0; text-align:left; line-height:1.45; max-width:420px;"><?= h((string) $class['honor_note']) ?></p>
+                            <?php if (!empty($class['grades_visible']) && !empty($class['performance_description'])): ?>
+                                <div class="subject-performance-feedback">
+                                    <p><strong>Description:</strong> <?= h($class['performance_description']) ?></p>
+                                    <p><strong>Recommendation:</strong> <?= h($class['performance_recommendation']) ?></p>
+                                </div>
                             <?php endif; ?>
                         </td>
                         <td style="text-align:right;">
@@ -259,9 +262,9 @@ layout_start('My Grades & Academic Standing', 'grades', [
                         </td>
                     </tr>
                     <!-- Expandable Component Scores Breakdown Row -->
-                    <tr id="breakdown-<?= $idx ?>" style="display:none; background: #FAFBFD;">
+                    <tr id="breakdown-<?= $idx ?>" style="display:none; background: var(--theme-surface, #FAFBFD);">
                         <td colspan="8" style="padding: 16px 20px;">
-                            <div style="border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 14px 18px;">
+                            <div style="border: 1px solid var(--line); border-radius: 10px; background: var(--theme-surface, #fff); padding: 14px 18px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
                                     <strong style="color: var(--navy); font-size: 14px;">
                                         <?= icon('record') ?> Score Breakdown · <?= h($class['subject_code']) ?> (<?= h($class['subject_name']) ?>)
@@ -272,8 +275,8 @@ layout_start('My Grades & Academic Standing', 'grades', [
                                 <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px;">
                                     <?php foreach (['prelim' => 'Prelim Period', 'midterm' => 'Midterm Period', 'finals' => 'Finals Period'] as $pKey => $pLabel): ?>
                                         <?php $pData = $class['periods'][$pKey] ?? null; ?>
-                                        <div style="border: 1px solid #EEF2F6; border-radius: 8px; padding: 10px 12px; background: #FDFEFF;">
-                                            <div style="display:flex; justify-content:space-between; border-bottom: 1px solid #EEF2F6; padding-bottom: 6px; margin-bottom: 8px;">
+                                        <div style="border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--theme-surface, #FDFEFF);">
+                                            <div style="display:flex; justify-content:space-between; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-bottom: 8px;">
                                                 <strong style="font-size: 13px; color: var(--navy);"><?= $pLabel ?></strong>
                                                 <span class="mono" style="font-size: 13px;">
                                                     <strong><?= fmt_eqv($pData['equivalent'] ?? null) ?></strong>
@@ -325,8 +328,11 @@ layout_start('My Grades & Academic Standing', 'grades', [
                             <span class="badge badge-<?= h($subjectRiskBadge) ?>" style="font-size:11px; padding:3px 7px;"><?= h($subjectRisk) ?></span>
                         </div>
                     </div>
-                    <?php if (trim((string) ($class['honor_note'] ?? '')) !== ''): ?>
-                        <p class="hint" style="margin:8px 0 0; line-height:1.4;"><?= h((string) $class['honor_note']) ?></p>
+                    <?php if (!empty($class['grades_visible']) && !empty($class['performance_description'])): ?>
+                        <div class="subject-performance-feedback">
+                            <p><strong>Description:</strong> <?= h($class['performance_description']) ?></p>
+                            <p><strong>Recommendation:</strong> <?= h($class['performance_recommendation']) ?></p>
+                        </div>
                     <?php endif; ?>
                     <div class="scm-title"><?= h($class['subject_name']) ?></div>
                     <div class="scm-prof">
@@ -346,7 +352,7 @@ layout_start('My Grades & Academic Standing', 'grades', [
                                 <div class="scm-period-pct" style="margin-top:6px;">—</div>
                             <?php endif; ?>
                         </div>
-                        <div class="scm-period-col" style="border-left:1px solid #EEF2F6; border-right:1px solid #EEF2F6;">
+                        <div class="scm-period-col" style="border-left:1px solid var(--line); border-right:1px solid var(--line);">
                             <strong>Midterm</strong>
                             <?php if (empty($class['grades_visible'])): ?>
                                 <div class="scm-period-pct" style="margin-top:6px;">Hidden</div>
@@ -387,14 +393,14 @@ layout_start('My Grades & Academic Standing', 'grades', [
                     </div>
 
                     <?php if (!empty($class['grades_visible'])): ?>
-                    <button type="button" class="scm-breakdown-btn" onclick="toggleMobileBreakdown(<?= $idx ?>)">
+                    <button type="button" class="scm-breakdown-btn" aria-expanded="false" aria-controls="mobile-breakdown-<?= $idx ?>" onclick="toggleMobileBreakdown(<?= $idx ?>, this)">
                         <?= icon('record') ?> <span>View Score Breakdown</span>
                     </button>
 
                     <div id="mobile-breakdown-<?= $idx ?>" class="scm-breakdown-content">
                         <?php foreach (['prelim' => 'Prelim', 'midterm' => 'Midterm', 'finals' => 'Finals'] as $pKey => $pLabel): ?>
                             <?php $pData = $class['periods'][$pKey] ?? null; ?>
-                            <div style="background:#F8FAFC; border:1px solid #EEF2F6; border-radius:8px; padding:10px; margin-bottom:8px;">
+                            <div style="background:var(--theme-surface, #F8FAFC); border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px;">
                                 <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
                                     <strong style="font-size:12px; color:var(--navy);"><?= $pLabel ?> Period</strong>
                                     <span class="mono" style="font-size:12px; font-weight:700;">
@@ -433,10 +439,11 @@ function toggleBreakdown(idx) {
     row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
 }
 
-function toggleMobileBreakdown(idx) {
+function toggleMobileBreakdown(idx, button) {
     const el = document.getElementById('mobile-breakdown-' + idx);
     if (!el) return;
-    el.classList.toggle('is-open');
+    const open = el.classList.toggle('is-open');
+    if (button) button.setAttribute('aria-expanded', String(open));
 }
 </script>
 

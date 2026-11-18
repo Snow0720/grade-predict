@@ -6,6 +6,12 @@ require_once __DIR__ . '/../includes/layout.php';
 
 db_or_setup();
 $user = require_portal('admin');
+$moduleController = module_controller('admin/settings.php', (string) ($_GET['view'] ?? ''));
+if ($moduleController !== null) {
+    require __DIR__ . '/' . $moduleController;
+    return;
+}
+
 require_permission($user, 'settings');
 
 $allowed = [
@@ -37,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $save->execute([$key, empty($_POST[$key]) ? '0' : '1']);
     }
     audit((int) $user['id'], 'settings_update', 'school_settings', null, 'Workflow and notification settings');
-    flash('ok', 'System settings saved successfully.');
+    flash('ok', 'Settings saved successfully.');
     redirect('admin/settings.php');
 }
 
@@ -51,11 +57,11 @@ foreach ($allowed as $key => $info) {
     }
 }
 
-layout_start('System Technical Settings', 'settings', [['label' => 'System settings']]);
+layout_start('Settings', 'settings', [['label' => 'Settings']]);
 ?>
 <div class="page-head">
     <div>
-        <h1>System Technical Settings</h1>
+        <h1>Settings</h1>
         <p class="lede">Technical settings do not grant approval authority. Workflow decisions remain strictly with designated personnel.</p>
     </div>
 </div>
@@ -80,7 +86,7 @@ layout_start('System Technical Settings', 'settings', [['label' => 'System setti
 <section class="card" style="margin-top: 18px;">
     <h2><?= icon('settings') ?> Workflow & Operational Preferences</h2>
     
-    <form method="post" style="margin-top: 14px;" data-offline-save data-offline-label="System settings">
+    <form method="post" style="margin-top: 14px;" data-offline-save data-offline-label="Settings">
         <?= csrf_field() ?>
         
         <div style="display: flex; flex-direction: column; gap: 16px;">

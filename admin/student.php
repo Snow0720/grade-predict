@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && can($user, 'students_write')) {
         redirect('admin/student.php', ['id' => $id]);
     }
 
-    if ($studentNumber === '' || $name === '' || $year === '' || $programId <= 0) {
+    if ($studentNumber === '' || $name === '' || !in_array($year, ['1st Year', '2nd Year', '3rd Year', '4th Year'], true) || $programId <= 0) {
         flash('error', 'Student ID, name, program, and year level are required.');
     } else {
         try {
@@ -106,12 +106,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && can($user, 'students_write')) {
     redirect('admin/student.php', ['id' => $id]);
 }
 
+$sections = $programs = $faculty = [];
+if (can($user, 'students_write')) {
 $sections = db()->prepare('SELECT id, name, year_level FROM sections WHERE program_id = ? ORDER BY year_level, name');
 $sections->execute([(int) $student['program_id']]);
 $sections = $sections->fetchAll();
 
 $programs = programs_for_user($user);
 $faculty = faculty_masterlist();
+}
 $adviserLabel = trim((string) ($student['adviser_title'] ?? '') . ' ' . (string) ($student['adviser_name'] ?? ''));
 
 $classes = db()->prepare(
@@ -130,12 +133,16 @@ $classes = db()->prepare(
 $classes->execute([$id]);
 $classes = $classes->fetchAll();
 
+$evals = [];
+if (!is_view_only_oic($user)) {
 $evals = db()->prepare('SELECT * FROM dl_pl_evaluations WHERE student_id = ? ORDER BY basis ASC');
 $evals->execute([$id]);
 $evals = $evals->fetchAll();
 
+}
+
 layout_start($student['full_name'], 'students', [
-    ['label' => 'Students', 'href' => 'admin/students.php'],
+    ['label' => 'Student Records', 'href' => 'admin/students.php'],
     ['label' => $student['student_number']],
 ]);
 ?>
@@ -149,7 +156,7 @@ layout_start($student['full_name'], 'students', [
     </div>
 </div>
 
-<section class="split">
+<section class="<?= is_view_only_oic($user) ? 'student-readonly' : 'split' ?>">
     <!-- Student Overview Card -->
     <article class="card">
         <h2><?= icon('record') ?> Student Information Overview</h2>
@@ -168,6 +175,7 @@ layout_start($student['full_name'], 'students', [
             </article>
         </div>
 
+        <?php if (!is_view_only_oic($user)): ?>
         <h3>DL / PL Evaluation Summary</h3>
         <?php if ($evals === []): ?>
             <p class="hint">Honor evaluations will appear here once grade sheets are submitted and refreshed.</p>
@@ -183,6 +191,7 @@ layout_start($student['full_name'], 'students', [
                     </li>
                 <?php endforeach; ?>
             </ul>
+        <?php endif; ?>
         <?php endif; ?>
     </article>
 
@@ -205,7 +214,12 @@ layout_start($student['full_name'], 'students', [
             <p class="hint">The student uses this address when they forget the portal password.</p>
             
             <label for="year_level">Year Level</label>
-            <input id="year_level" name="year_level" value="<?= h($student['year_level']) ?>" required>
+            <select id="year_level" name="year_level" required>
+                <option value="" disabled <?= !in_array($student['year_level'], ['1st Year', '2nd Year', '3rd Year', '4th Year'], true) ? 'selected' : '' ?>>Select year level</option>
+                <?php foreach (['1st Year', '2nd Year', '3rd Year', '4th Year'] as $yearOption): ?>
+                    <option value="<?= h($yearOption) ?>" <?= $student['year_level'] === $yearOption ? 'selected' : '' ?>><?= h($yearOption) ?></option>
+                <?php endforeach; ?>
+            </select>
             
             <label for="student_type">Academic Standing Type</label>
             <select id="student_type" name="student_type">

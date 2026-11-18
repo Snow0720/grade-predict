@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/gradebook.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/dashboard_charts.php';
 
 db_or_setup();
 $user = require_portal('admin');
@@ -13,25 +14,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $action = (string) ($_POST['action'] ?? '');
     try {
-        if ($action === 'create') {
-            $username = trim((string) ($_POST['username'] ?? ''));
-            $name = trim((string) ($_POST['full_name'] ?? ''));
-            $title = trim((string) ($_POST['title'] ?? ''));
-            $password = (string) ($_POST['password'] ?? '');
-            if ($username === '' || $name === '' || strlen($password) < 8) {
-                throw new RuntimeException('Username, name, and a password of at least 8 characters are required.');
+        $actionScope = scoped_program_ids($user);
+        if (is_array($actionScope) && in_array($action, ['enroll', 'delete'], true)) {
+            $targetAssignment = fetch_assignment((int) ($_POST['assignment_id'] ?? 0));
+            if (!$targetAssignment || !program_in_scope($actionScope, (int) $targetAssignment['program_id'])) {
+                throw new RuntimeException('This class is outside your assigned program.');
             }
-            db()->beginTransaction();
-            db()->prepare('INSERT INTO users (username, password_hash, full_name, title, must_change_password) VALUES (?, ?, ?, ?, 1)')
-                ->execute([$username, password_hash($password, PASSWORD_DEFAULT), $name, $title]);
-            $userId = (int) db()->lastInsertId();
-            $roleId = (int) db()->query("SELECT id FROM roles WHERE code = 'professor'")->fetchColumn();
-            db()->prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)')->execute([$userId, $roleId]);
-            db()->prepare('INSERT INTO professors (user_id) VALUES (?)')->execute([$userId]);
-            audit((int) $user['id'], 'account_create', 'user', (string) $userId, 'Professor ' . $username);
-            db()->commit();
-            flash('ok', 'Professor account created. They must change the temporary password upon initial login.');
-        } elseif ($action === 'reset') {
+        }
+        if (is_array($actionScope) && in_array($action, ['reset', 'toggle'], true)) {
+            $targetPrograms = db()->prepare('SELECT DISTINCT s.program_id FROM professors pr JOIN professor_assignments pa ON pa.professor_id = pr.id JOIN subjects s ON s.id = pa.subject_id WHERE pr.user_id = ?');
+            $targetPrograms->execute([(int) ($_POST['user_id'] ?? 0)]);
+            $targetProgramIds = array_map('intval', $targetPrograms->fetchAll(PDO::FETCH_COLUMN));
+            if ($targetProgramIds === [] || array_diff($targetProgramIds, $actionScope) !== []) {
+                throw new RuntimeException('This professor account is shared or outside your program. Account changes require a college administrator.');
+            }
+        }
+        if ($action === 'reset') {
             $target = (int) ($_POST['user_id'] ?? 0);
             $password = (string) ($_POST['password'] ?? '');
             if (strlen($password) < 8) {
@@ -139,12 +137,24 @@ $faculty = db()->query(
      FROM professors pr JOIN users u ON u.id = pr.user_id ORDER BY u.full_name'
 )->fetchAll();
 $scope = scoped_program_ids($user);
+if (is_array($scope)) {
+    $facultyScopeList = $scope === [] ? '0' : implode(',', array_map('intval', $scope));
+    $faculty = db()->query(
+        "SELECT DISTINCT u.id AS user_id, u.username, u.full_name, u.title, u.is_active, pr.id AS professor_id
+         FROM professors pr JOIN users u ON u.id = pr.user_id
+         LEFT JOIN professor_assignments pa ON pa.professor_id = pr.id LEFT JOIN subjects s ON s.id = pa.subject_id
+         WHERE s.program_id IN ($facultyScopeList)
+            OR (pa.id IS NULL AND EXISTS (SELECT 1 FROM audit_logs a WHERE a.user_id = " . (int) $user['id'] . " AND a.action = 'account_create' AND a.entity = 'user' AND a.entity_id = u.id))
+         ORDER BY u.full_name"
+    )->fetchAll();
+}
+
 $programs = programs_for_user($user);
 $subjectSql = 'SELECT s.id, s.code, s.name, s.year_level, s.program_id, p.code AS program_code
      FROM subjects s JOIN programs p ON p.id = s.program_id';
 $sectionSql = 'SELECT sec.id, sec.name, sec.year_level, sec.program_id, p.code AS program_code
      FROM sections sec JOIN programs p ON p.id = sec.program_id';
-$assignSql = 'SELECT pa.id, s.code, sec.name AS section_name, u.full_name, gs.status
+$assignSql = 'SELECT pa.id, pa.professor_id, s.program_id, s.code, sec.name AS section_name, u.full_name, gs.status
      FROM professor_assignments pa
      JOIN subjects s ON s.id = pa.subject_id
      JOIN sections sec ON sec.id = pa.section_id
@@ -164,13 +174,24 @@ $subjects = db()->query($subjectSql)->fetchAll();
 $sections = db()->query($sectionSql)->fetchAll();
 $assignments = db()->query($assignSql)->fetchAll();
 
-// Calculate Summary Metrics
-$totalFaculty = count($faculty);
-$activeFaculty = 0;
-foreach ($faculty as $f) {
-    if ((int)$f['is_active'] === 1) $activeFaculty++;
+$facultyGroups = [];
+$programFaculty = [];
+$programAssignments = [];
+foreach ($programs as $program) {
+    $programId = (int) $program['id'];
+    $facultyGroups[$programId] = ['label' => (string) $program['code'], 'faculty' => 0, 'assignments' => 0];
 }
-$totalAssignments = count($assignments);
+foreach ($assignments as $assignment) {
+    $programId = (int) $assignment['program_id'];
+    if (!isset($facultyGroups[$programId])) continue;
+    $programFaculty[$programId][(int) $assignment['professor_id']] = true;
+    $programAssignments[$programId][(int) $assignment['id']] = true;
+}
+foreach ($facultyGroups as $programId => &$group) {
+    $group['faculty'] = count($programFaculty[$programId] ?? []);
+    $group['assignments'] = count($programAssignments[$programId] ?? []);
+}
+unset($group);
 
 layout_start('Faculty Management', 'faculty', [['label' => 'Faculty']]);
 ?>
@@ -181,48 +202,13 @@ layout_start('Faculty Management', 'faculty', [['label' => 'Faculty']]);
     </div>
 </div>
 
-<!-- Summary Metrics Header -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Total Faculty Professors</span>
-        <strong><?= $totalFaculty ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Active Accounts</span>
-        <strong><?= $activeFaculty ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Active Class Assignments</span>
-        <strong><?= $totalAssignments ?></strong>
-    </article>
+<section class="card faculty-summary-chart">
+    <?php dashboard_grouped_bars('faculty-assignments', 'Faculty & class assignments by program', array_values($facultyGroups), false, [
+        'faculty' => 'Faculty Members', 'assignments' => 'Class Assignments',
+    ]); ?>
 </section>
 
-<section class="split">
-    <!-- New Professor Form -->
-    <article class="card">
-        <h2><?= icon('faculty') ?> New Professor Account</h2>
-        <form method="post" style="margin-top: 12px;" data-offline-save data-offline-label="New professor">
-            <?= csrf_field() ?>
-            <input type="hidden" name="action" value="create">
-            
-            <label for="title">Title / Prefix</label>
-            <input id="title" name="title" value="Mr." required>
-            
-            <label for="full_name">Full Name</label>
-            <input id="full_name" name="full_name" placeholder="e.g. Febrick Quiza" required>
-            
-            <label for="username">System Username</label>
-            <input id="username" name="username" placeholder="e.g. fquiza" required>
-            
-            <label for="password">Temporary Password</label>
-            <input id="password" name="password" type="text" minlength="8" placeholder="At least 8 characters" required>
-            
-            <div style="margin-top: 16px;">
-                <button class="btn btn-gold" type="submit">Create Professor Account</button>
-            </div>
-        </form>
-    </article>
-
+<section>
     <!-- Class Assignment Form -->
     <article class="card">
         <h2><?= icon('classes') ?> Assign Class Grading Sheet</h2>
@@ -464,7 +450,7 @@ layout_start('Faculty Management', 'faculty', [['label' => 'Faculty']]);
                         <th>Class Subject & Section</th>
                         <th>Assigned Professor</th>
                         <th>Submission Status</th>
-                        <th style="text-align: right;">Actions</th>
+                        <th style="text-align: left;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>

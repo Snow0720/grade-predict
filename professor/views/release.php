@@ -15,9 +15,9 @@ $visibilityPageStudents = array_slice($visibilityStudents, $visibilityPager['off
 ?>
 <section class="card" style="margin-bottom:16px;">
     <div class="card-head">
-        <h2><?= icon('key') ?> Student grade visibility</h2>
+        <h2><?= icon('eye') ?> Student grade visibility</h2>
     </div>
-    <p class="hint" style="margin-top:0;">Use the eye beside a student. An open eye lets that student see the grades. A closed eye hides them.</p>
+    <p class="hint" style="margin-top:0;">Grades are visible only to students who have paid the tuition fee for the corresponding term. Use the eye icon to show or hide grades.</p>
     <form method="post" action="<?= h(url('professor/class.php', sheet_query(['id' => $assignment['id'], 'view' => $view, 'period' => $period]))) ?>">
         <?= csrf_field() ?>
         <input type="hidden" name="assignment_id" value="<?= (int) $assignment['id'] ?>">

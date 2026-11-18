@@ -285,7 +285,7 @@ CREATE TABLE score_adjustments (
 CREATE TABLE grade_submissions (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     assignment_id INT UNSIGNED NOT NULL,
-    status ENUM('draft','submitted','returned','chair_verified','oic_approved','osa_endorsed','registrar_finalized') NOT NULL DEFAULT 'draft',
+    status ENUM('draft','submitted','returned','chair_verified','oic_approved','osa_endorsed','registrar_finalized','rejected') NOT NULL DEFAULT 'draft',
     submitted_periods VARCHAR(64) NOT NULL DEFAULT '',
     submitted_at DATETIME DEFAULT NULL,
     locked TINYINT(1) NOT NULL DEFAULT 0,

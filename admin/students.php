@@ -4,11 +4,15 @@ require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/gradebook.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/dashboard_charts.php';
 
 db_or_setup();
 ensure_student_auth_columns();
 $user = require_portal('admin');
 require_permission($user, 'students_read');
+if (basename((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === 'students.php') {
+    redirect('admin/students.php', $_GET);
+}
 ensure_student_adviser_column();
 
 $scope = scoped_program_ids($user);
@@ -114,12 +118,33 @@ if ($studentIds !== []) {
 
 // Overall Stats Counters (for Scope)
 $statWhere = 'WHERE 1 = 1';
-if (is_array($scope) && $scope !== []) {
-    $statWhere .= ' AND st.program_id IN (' . implode(',', array_map('intval', $scope)) . ')';
+if (is_array($scope)) {
+    $statWhere .= $scope === [] ? ' AND 1 = 0' : ' AND st.program_id IN (' . implode(',', array_map('intval', $scope)) . ')';
 }
-$totalAll = (int) db()->query("SELECT COUNT(*) FROM students st $statWhere")->fetchColumn();
-$regularAll = (int) db()->query("SELECT COUNT(*) FROM students st $statWhere AND st.student_type = 'Regular'")->fetchColumn();
-$irregularAll = (int) db()->query("SELECT COUNT(*) FROM students st $statWhere AND st.student_type = 'Irregular'")->fetchColumn();
+$yearSeries = [];
+foreach ($programs as $item) $yearSeries['program_' . (int) $item['id']] = (string) $item['code'];
+$yearGroups = [];
+foreach (['1st Year', '2nd Year', '3rd Year', '4th Year'] as $yearLabel) {
+    $yearGroups[] = ['label' => $yearLabel] + array_fill_keys(array_keys($yearSeries), 0);
+}
+$yearCounts = db()->query("SELECT st.program_id, st.year_level, COUNT(*) AS total FROM students st $statWhere GROUP BY st.program_id, st.year_level")->fetchAll();
+foreach ($yearCounts as $item) {
+    $series = 'program_' . (int) $item['program_id'];
+    if (!isset($yearSeries[$series]) || !preg_match('/^\s*([1-4])(?:st|nd|rd|th)?(?:\s+year)?\s*$/i', (string) $item['year_level'], $match)) continue;
+    $yearGroups[(int) $match[1] - 1][$series] += (int) $item['total'];
+}
+$studentTypeGroups = [];
+foreach ($programs as $item) {
+    $studentTypeGroups[(int) $item['id']] = ['label' => (string) $item['code'], 'regular' => 0, 'irregular' => 0];
+}
+$typeCounts = db()->query("SELECT st.program_id, st.student_type, COUNT(*) AS total FROM students st $statWhere GROUP BY st.program_id, st.student_type")->fetchAll();
+foreach ($typeCounts as $item) {
+    $programId = (int) $item['program_id'];
+    $studentType = strtolower((string) $item['student_type']);
+    if (isset($studentTypeGroups[$programId]) && in_array($studentType, ['regular', 'irregular'], true)) {
+        $studentTypeGroups[$programId][$studentType] = (int) $item['total'];
+    }
+}
 
 $yearSql = 'SELECT DISTINCT st.year_level FROM students st WHERE st.year_level <> ""';
 $sectionSql = 'SELECT sec.id, sec.name, sec.year_level, p.code AS program_code
@@ -137,40 +162,31 @@ if ($program > 0) {
 $years = db()->query($yearSql . ' ORDER BY st.year_level')->fetchAll(PDO::FETCH_COLUMN);
 $sections = db()->query($sectionSql . ' ORDER BY p.code, sec.year_level, sec.name')->fetchAll();
 
-layout_start('Students Masterlist', 'students', [['label' => 'Students']]);
+layout_start('Student Records', 'students', [['label' => 'Student Records']]);
 ?>
 <div class="page-head">
     <div>
-        <h1>Students Masterlist</h1>
-        <p class="lede">Student records already in the college. New student portal accounts are created in User management.</p>
+        <h1>Student Records</h1>
     </div>
-    <?php if (can($user, 'import')): ?>
-        <a class="btn" href="<?= h(url('admin/import.php')) ?>"><?= icon('import') ?> Import Student Records</a>
-    <?php endif; ?>
 </div>
 
-<!-- Summary Stats Header -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Total Masterlist Students</span>
-        <strong><?= $totalAll ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Regular Students</span>
-        <strong><?= $regularAll ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Irregular Students</span>
-        <strong><?= $irregularAll ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Active Sections</span>
-        <strong><?= count($sections) ?></strong>
-    </article>
+<section class="card student-summary-chart">
+    <?php if ($yearSeries !== []): ?>
+        <?php dashboard_grouped_bars('students-by-year', 'Masterlist students by year level', $yearGroups, false, $yearSeries, 'Year Level'); ?>
+    <?php else: ?><p class="empty">No programs are available in your scope.</p><?php endif; ?>
+</section>
+
+
+
+<section class="card student-summary-chart">
+    <?php dashboard_grouped_bars('student-types', 'Regular & irregular students by program', array_values($studentTypeGroups), false, [
+        'regular' => 'Regular Students', 'irregular' => 'Irregular Students',
+    ]); ?>
 </section>
 
 <!-- Search and Filtering Toolbar -->
-<form class="filters" method="get" action="<?= h(url('admin/students.php')) ?>" data-live="students">
+<form class="filters" method="get" action="<?= h(url('admin/users.php')) ?>" data-live="students">
+    <input type="hidden" name="view" value="students">
     <div>
         <label for="q">Search Record</label>
         <input id="q" name="q" type="search" value="<?= h($q) ?>" placeholder="Name or student number" autocomplete="off">
@@ -248,8 +264,8 @@ layout_start('Students Masterlist', 'students', [['label' => 'Students']]);
                         <th>Section</th>
                         <th>Assigned Professor</th>
                         <th>Type</th>
-                        <th>Possible DL / PL</th>
-                        <th style="text-align:right;">Action</th>
+                        <?php if (!is_view_only_oic($user)): ?><th>Possible DL / PL</th><?php endif; ?>
+                        <th style="text-align: left;">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -263,6 +279,7 @@ layout_start('Students Masterlist', 'students', [['label' => 'Students']]);
                         <td><?= h($row['section_name'] ?? '—') ?></td>
                         <td><?= !empty($row['adviser_name']) ? h(trim((string) $row['adviser_title'] . ' ' . $row['adviser_name'])) : '—' ?></td>
                         <td><?= badge($row['student_type'], $row['student_type']) ?></td>
+                        <?php if (!is_view_only_oic($user)): ?>
                         <td>
                             <?php $std = $studentStandings[(int)$row['id']] ?? null; ?>
                             <?php if ($std === 'Possible PL'): ?>
@@ -273,9 +290,10 @@ layout_start('Students Masterlist', 'students', [['label' => 'Students']]);
                                 <span class="hint">—</span>
                             <?php endif; ?>
                         </td>
+                        <?php endif; ?>
                         <td style="text-align:right;">
                             <a class="btn btn-ghost btn-sm" href="<?= h(url('admin/student.php', ['id' => $row['id']])) ?>">
-                                <?= icon('record') ?> View Info
+                                <?= icon('record') ?> <?= is_view_only_oic($user) ? 'View Grades' : 'View Info' ?>
                             </a>
                         </td>
                     </tr>

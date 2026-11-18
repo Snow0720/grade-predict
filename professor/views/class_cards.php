@@ -12,7 +12,7 @@ declare(strict_types=1);
 
 /* Modernized Card Item */
 .modern-class-card {
-    background: #ffffff;
+    background: var(--theme-surface, #ffffff);
     border: 1px solid #e2e8f0;
     border-radius: 12px;
     padding: 20px;
@@ -42,12 +42,12 @@ declare(strict_types=1);
 .class-icon-wrapper {
     width: 36px;
     height: 36px;
-    background: #f1f5f9;
+    background: var(--theme-raised, #f1f5f9);
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #0f172a;
+    color: var(--ink, #0f172a);
 }
 
 /* Code & Subject Titles */
@@ -55,7 +55,7 @@ declare(strict_types=1);
     margin: 0 0 4px 0;
     font-size: 1.15rem;
     font-weight: 800;
-    color: #0f172a;
+    color: var(--ink, #0f172a);
     letter-spacing: -0.2px;
 }
 
@@ -63,13 +63,13 @@ declare(strict_types=1);
     margin: 0 0 12px 0;
     font-size: 0.92rem;
     font-weight: 600;
-    color: #334155;
+    color: var(--ink, #334155);
 }
 
 .class-meta-info {
     margin: 0 0 16px 0;
     font-size: 0.82rem;
-    color: #64748b;
+    color: var(--muted, #64748b);
     line-height: 1.4;
 }
 
@@ -82,7 +82,7 @@ declare(strict_types=1);
     border-top: 1px solid #f1f5f9;
     font-size: 0.85rem;
     font-weight: 600;
-    color: #64748b;
+    color: var(--muted, #64748b);
 }
 
 .open-link-action {

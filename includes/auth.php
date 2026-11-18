@@ -11,6 +11,43 @@ function college_wide_roles(): array
     return ['system_admin', 'college_oic', 'osa'];
 }
 
+function is_view_only_oic(array $user): bool
+{
+    return in_array('college_oic', $user['roles'] ?? [], true);
+}
+
+/** OIC may browse student records and grades, but cannot submit any record changes. */
+function oic_request_allowed(string $path, string $method, string $view = ''): bool
+{
+    if ($path === 'logout.php' && in_array($method, ['GET', 'POST'], true)) {
+        return true;
+    }
+    if (!in_array($method, ['GET', 'HEAD'], true)) {
+        return false;
+    }
+    return ($path === 'admin/students.php' && $view === '')
+        || ($path === 'admin/student.php' && $view === '')
+        || ($path === 'admin/users.php' && in_array($view, ['students', 'student-record'], true));
+}
+
+function enforce_oic_view_only(array $user): void
+{
+    if (!is_view_only_oic($user) || PHP_SAPI === 'cli') {
+        return;
+    }
+    $file = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_FILENAME'] ?? ''));
+    $root = str_replace('\\', '/', dirname(__DIR__)) . '/';
+    $path = str_starts_with(strtolower($file), strtolower($root)) ? substr($file, strlen($root)) : '';
+    $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    if (in_array($path, ['admin/dashboard.php', 'admin/login.php'], true) && in_array($method, ['GET', 'HEAD'], true)) {
+        redirect(home_path('admin', $user));
+    }
+    if (!oic_request_allowed($path, $method, (string) ($_GET['view'] ?? ''))) {
+        http_response_code(403);
+        exit('College OIC access is view-only: student list and grades.');
+    }
+}
+
 function current_user(): ?array
 {
     static $loaded = false;
@@ -30,9 +67,10 @@ function current_user(): ?array
         return null;
     }
     $roles = db()->prepare(
-        'SELECT r.code, r.name, ur.program_id
+        'SELECT r.code, r.name, ur.program_id, p.code AS program_code
          FROM user_roles ur
          JOIN roles r ON r.id = ur.role_id
+         LEFT JOIN programs p ON p.id = ur.program_id
          WHERE ur.user_id = ?'
     );
     $roles->execute([(int) $row['id']]);
@@ -40,6 +78,7 @@ function current_user(): ?array
     $row['roles'] = array_column($row['role_rows'], 'code');
     $row['portal'] = $_SESSION['portal'] ?? 'admin';
     $row['role_label'] = role_label($row);
+    enforce_oic_view_only($row);
     return $user = $row;
 }
 
@@ -51,7 +90,10 @@ function role_label(array $user): string
     $names = [];
     foreach ($user['role_rows'] as $role) {
         $code = (string) ($role['code'] ?? '');
-        $names[] = $short[$code] ?? (string) $role['name'];
+        $program = trim((string) ($role['program_code'] ?? ''));
+        $names[] = $code === 'program_chair' && $program !== ''
+            ? $program . ' Program Chair'
+            : ($short[$code] ?? (string) $role['name']);
     }
     return $names === [] ? 'User' : implode(', ', $names);
 }
@@ -65,16 +107,25 @@ function display_name(array $person): string
 
 function can(array $user, string $permission): bool
 {
+    if (is_view_only_oic($user)) {
+        return $permission === 'students_read';
+    }
+    if (in_array($permission, ['reports', 'recognition', 'queue'], true) && in_array('osa', $user['roles'] ?? [], true)) {
+        return false;
+    }
+    if ($permission === 'reports' && in_array('program_chair', $user['roles'] ?? [], true)) {
+        return false;
+    }
     $offices = office_roles();
     $map = [
         'manage_users' => $offices,
         'manage_faculty' => $offices,
         'manage_academics' => $offices,
-        'import' => $offices,
+        'import' => [],
         'rules' => $offices,
         'settings' => $offices,
         'queue' => $offices,
-        'scholarships' => $offices,
+        'scholarships' => ['system_admin', 'osa'],
         'reports' => $offices,
         'evaluations' => $offices,
         'recognition' => $offices,
@@ -143,13 +194,28 @@ function login_path(string $portal): string
     };
 }
 
-function home_path(string $portal): string
+function home_path(string $portal, ?array $user = null): string
 {
+    if ($portal === 'admin' && $user !== null && is_view_only_oic($user)) {
+        return 'admin/users.php?view=students';
+    }
     return match ($portal) {
         'admin' => 'admin/dashboard.php',
         'student' => 'student/dashboard.php',
         default => 'professor/dashboard.php',
     };
+}
+
+function account_portals(array $user): array
+{
+    $portals = [];
+    if (array_intersect($user['roles'] ?? [], office_roles())) {
+        $portals['admin'] = 'College Admins';
+    }
+    if (!is_view_only_oic($user) && in_array('professor', $user['roles'] ?? [], true)) {
+        $portals['professor'] = 'Professor';
+    }
+    return $portals;
 }
 
 function ensure_student_auth_columns(): void
@@ -409,7 +475,7 @@ function attempt_portal_login(string $portal): string
     $_SESSION['portal'] = $portal;
     db()->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([(int) $user['id']]);
     audit((int) $user['id'], 'login', 'user', (string) $user['id'], $portal . ' portal');
-    redirect(home_path($portal));
+    redirect(home_path($portal, ['roles' => $roles]));
 }
 
 function require_user(): array
@@ -460,6 +526,9 @@ function sheet_query(array $query = []): array
 
 function repair_college_wide_scope(array $user): void
 {
+    if (is_view_only_oic($user)) {
+        return;
+    }
     if (!empty($_SESSION['college_scope_repaired']) || !array_intersect($user['roles'], college_wide_roles())) {
         return;
     }

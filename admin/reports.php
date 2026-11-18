@@ -176,6 +176,7 @@ layout_start((string) ($titles[$type] ?? 'Reports'), 'reports', [['label' => 'Re
 <!-- Report Selection & Program Scope Filters -->
 <section class="card" style="margin-bottom: 18px;">
     <form class="filters" method="get" style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
+        <input type="hidden" name="view" value="reports">
         <div style="flex: 1; min-width: 220px;">
             <label for="type">Report</label>
             <select id="type" name="type" style="width: 100%;">
@@ -226,7 +227,7 @@ layout_start((string) ($titles[$type] ?? 'Reports'), 'reports', [['label' => 'Re
                                 if (in_array($colName, ['status', 'workflow_status', 'academic_standing'], true)): ?>
                                     <?= badge($valStr, $valStr) ?>
                                 <?php elseif ($colName === 'discount_percent' && $valStr !== ''): ?>
-                                    <span class="badge" style="background: #e3f2fd; color: #1565c0; font-weight:600;">
+                                    <span class="badge badge-info" style="font-weight:600;">
                                         <?= (float)$valStr > 0 ? h(number_format((float)$valStr, 0)) . '% Discount' : 'Cash Grant' ?>
                                     </span>
                                 <?php elseif (in_array($colName, ['submitted_at', 'updated_at'], true) && $valStr !== ''): ?>

@@ -4,6 +4,7 @@ require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/recognition.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/dashboard_charts.php';
 
 db_or_setup();
 $user = require_portal('admin');
@@ -38,6 +39,10 @@ $dir = (($_POST['dir'] ?? $_GET['dir'] ?? '') === 'desc') ? 'desc' : 'asc';
 
 if (($_GET['export'] ?? '') === 'csv') {
     $official = recognition_official($semesterId);
+    $exportScope = scoped_program_ids($user);
+    if (is_array($exportScope)) {
+        $official = array_values(array_filter($official, static fn (array $row): bool => in_array((int) $row['program_id'], $exportScope, true)));
+    }
     audit((int) $user['id'], 'recognition_export', 'semester', (string) $semesterId, 'Official Masterlist CSV');
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="official-masterlist.csv"');
@@ -109,7 +114,7 @@ foreach ($rows as $row) {
 $history = recognition_history($caseIds);
 
 $headings = [
-    'program_chair' => 'Program Chair Recognition Queue',
+    'program_chair' => account_office_label($user) . ' Recognition Monitoring',
     'college_oic' => display_name($user) . ' · Recognition Records',
     'osa' => 'Secretary · Recognition Records',
     'viewer' => 'Recognition Workflow Records',
@@ -150,26 +155,26 @@ layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['la
     </div>
 </div>
 
-<!-- Recognition Metric Summary -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Total Candidates Listed</span>
-        <strong><?= $totalVisible ?></strong>
-    </article>
-    <article class="kpi">
-        <span>In Workflow / Pending</span>
-        <strong><?= $reviewCount ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Verified Official Records</span>
-        <strong><?= $verifiedCount ?></strong>
-    </article>
+<section class="dashboard-grid recognition-charts" aria-label="Candidate overview and workflow status">
+<article class="card recognition-summary-chart">
+    <?php dashboard_horizontal_bars('recognition-summary', 'Candidate Overview', [
+        ['label' => 'Total Candidates', 'count' => $totalVisible],
+        ['label' => 'Pending Review', 'count' => $reviewCount],
+        ['label' => 'Verified Records', 'count' => $verifiedCount],
+    ], ['count' => 'Records'], 'Status'); ?>
+</article>
+<article class="card recognition-workflow-chart workflow-status-chart">
+    <?php dashboard_donut('recognition-workflow', 'Workflow Status', recognition_workflow_counts($rows), [
+        'colors' => ['#38823C', '#285597', '#D9A536', '#B35224', '#7561A5', '#8793A5'],
+    ]); ?>
+</article>
 </section>
 
 <form class="filters" method="get">
+        <input type="hidden" name="view" value="recognition">
     <div>
         <label for="semester">Semester</label>
-        <select id="semester" name="semester">
+        <select id="semester" name="semester" onchange="this.form.requestSubmit()">
             <?php foreach ($semesters as $semester): ?>
                 <option value="<?= (int) $semester['id'] ?>" <?= $semesterId === (int) $semester['id'] ? 'selected' : '' ?>><?= h($semester['label'] . ' ' . $semester['name']) ?></option>
             <?php endforeach; ?>
@@ -185,7 +190,7 @@ layout_start((string) ($headings[$actor] ?? 'Recognition'), 'recognition', [['la
             <option value="">All visible</option>
             <?php
             $tabs = match ($actor) {
-                'program_chair' => ['review' => 'For Review', 'endorsed' => 'Endorsed', 'returned' => 'Returned', 'rejected' => 'Rejected'],
+                'program_chair' => ['review' => 'Awaiting Chair Review', 'endorsed' => 'Approved by Chair', 'returned' => 'Returned for Revision', 'rejected' => 'Rejected'],
                 'college_oic', 'osa' => ['' => 'All Candidates', 'review' => 'In Workflow', 'endorsed' => 'Endorsed'],
                 default => ['history' => 'All workflow records'],
             };

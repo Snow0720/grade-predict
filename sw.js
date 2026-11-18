@@ -1,4 +1,4 @@
-const CACHE = 'spcc-grades-v5';
+const CACHE = 'spcc-grades-v14';
 const SHELL = [
     'index.php',
     'student/login.php',
@@ -6,12 +6,18 @@ const SHELL = [
     'admin/login.php',
     'manifest.php',
     'assets/css/app.css',
+    'assets/css/responsive.css',
+    'assets/css/theme.css',
+    'assets/js/theme.js',
     'assets/js/app.js',
+    'assets/js/navigation.js',
     'assets/js/drafts.js',
     'assets/js/gradebook.js',
-    'img/logo.png',
-    'img/icon-192.png',
-    'img/icon-512.png',
+    'img/Newest Logo.webp',
+    'img/newest-favicon.ico',
+    'img/newest-icon-192.png',
+    'img/newest-icon-512.png',
+    'img/newest-icon-maskable-512.png',
 ];
 
 self.addEventListener('install', function (event) {
@@ -125,7 +131,7 @@ async function similarClass(request) {
 
 function offlinePage() {
     const html = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Offline</title></head>'
-        + '<body style="font-family:Segoe UI,sans-serif;background:#F5F7FA;color:#142B49;padding:40px;">'
+        + '<body style="font-family:Segoe UI,sans-serif;background:#F5F7FA;color:#000058;padding:40px;">'
         + '<h1>This page is not on this device yet</h1>'
         + '<p>Connect once and open your dashboard. Class sheets and office pages are saved on this device after that, and they open without internet.</p>'
         + '</body></html>';

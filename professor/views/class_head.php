@@ -18,7 +18,7 @@ $pageHeading = match ($view) {
 };
 ?>
 <section class="sheet-top">
-    <img src="<?= h(url('img/logo.png')) ?>" alt="">
+    <img src="<?= h(url('img/Newest Logo.webp')) ?>" alt="">
     <div class="sheet-title">
         <p><?= h(SCHOOL_NAME) ?></p>
         <h1><?= h($pageHeading) ?></h1>
@@ -68,7 +68,33 @@ if (in_array($view, ['sheet', 'summary'], true) && isset(PERIODS[$period]) && in
     <?php foreach (PERIODS as $key => $label): ?>
         <a class="<?= $period === $key ? 'is-active' : '' ?>" href="<?= h(url('professor/class.php', sheet_query(['id' => $assignment['id'], 'view' => $view, 'period' => $key]))) ?>"><?= h($label) ?></a>
     <?php endforeach; ?>
+    <?php if (($user['portal'] ?? '') === 'professor'): ?>
+        <button type="button" class="gradebook-color-toggle" aria-label="Customize gradebook colors" title="Customize gradebook colors" aria-haspopup="dialog" aria-controls="gradebookColors" data-gradebook-color-toggle hidden><?= icon('pencil') ?></button>
+    <?php endif; ?>
 </nav>
+<?php if (($user['portal'] ?? '') === 'professor'): ?>
+    <dialog id="gradebookColors" class="gradebook-color-dialog" aria-labelledby="gradebookColorsTitle" data-gradebook-colors="<?= (int) $user['id'] ?>">
+        <form method="dialog">
+            <h2 id="gradebookColorsTitle">Gradebook Colors</h2>
+            <p class="hint">Choose a color for each category. The gradebook uses soft shades for all periods in this browser.</p>
+            <div class="gradebook-color-options">
+                <?php foreach (CATEGORIES as $category => $label): ?>
+                    <label class="gradebook-color-option">
+                        <span><?= h($label) ?></span>
+                        <span class="gradebook-color-picker" style="--gradebook-preview: var(--<?= h($tone[$category]) ?>)">
+                            <input type="color" data-tone="<?= h($tone[$category]) ?>">
+                        </span>
+                    </label>
+                <?php endforeach; ?>
+            </div>
+            <div class="dialog-actions gradebook-color-actions">
+                <button type="button" class="btn btn-ghost" data-gradebook-color-reset>Reset to Defaults</button>
+                <button type="button" class="btn btn-ghost" data-gradebook-color-cancel>Cancel</button>
+                <button type="submit" class="btn btn-gold">Save Colors</button>
+            </div>
+        </form>
+    </dialog>
+<?php endif; ?>
 <?php
 $warning = weight_warning((float) ($book['students'][0]['periods'][$period]['weight_total'] ?? array_sum($book['weights'][$period] ?? [])), PERIODS[$period]);
 if ($warning): ?>

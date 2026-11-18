@@ -20,22 +20,10 @@ function recognition_actor(array $user): string
 
 function recognition_stage_label(string $stage): string
 {
-    return [
-        'chair_review' => 'For Program Chair Review',
-        'chair_endorsed' => 'Endorsed & Approved (Final)',
-        'chair_returned' => 'Returned to Program Chair',
-        'chair_rejected' => 'Rejected by Program Chair',
-        'oic_approved' => 'Approved by OIC (Oversight)',
-        'oic_returned' => 'Returned by OIC',
-        'oic_rejected' => 'Rejected by OIC',
-        'osa_approved' => 'Qualified by the Secretary',
-        'osa_rejected' => 'Rejected by the Secretary',
-        'osa_deferred' => 'Deferred by the Secretary',
-        'registrar_returned' => 'Returned for correction',
-        'registrar_verified' => 'Officially Recorded',
-        'approved' => 'Approved & Finalized',
-        'final' => 'Approved & Finalized',
-    ][$stage] ?? $stage;
+    if (str_ends_with($stage, '_rejected')) return 'Rejected';
+    if (str_ends_with($stage, '_returned') || $stage === 'osa_deferred') return 'Returned for Revision';
+    if (in_array($stage, ['chair_endorsed', 'oic_approved', 'osa_approved', 'registrar_verified', 'approved', 'final'], true)) return 'Approved by Chair';
+    return 'Awaiting Chair Review';
 }
 
 function recognition_stage_group(string $actor, string $stage): string
@@ -63,6 +51,22 @@ function recognition_stage_group(string $actor, string $stage): string
         ],
     ];
     return $groups[$actor][$stage] ?? 'history';
+}
+
+function recognition_workflow_counts(array $rows): array
+{
+    $counts = ['Endorsed' => 0, 'For Review' => 0, 'Rejected' => 0, 'Returned' => 0];
+    foreach ($rows as $row) {
+        $stage = empty($row['case_id']) ? '' : (string) ($row['stage'] ?? '');
+        $label = match (recognition_stage_label($stage)) {
+            'Approved by Chair' => 'Endorsed',
+            'Rejected' => 'Rejected',
+            'Returned for Revision' => 'Returned',
+            default => 'For Review',
+        };
+        $counts[$label]++;
+    }
+    return $counts;
 }
 
 function recognition_list_label(string $listType): string
@@ -258,6 +262,28 @@ function recognition_sync_candidate(int $studentId, int $semesterId): ?int
     $caseId = (int) db()->lastInsertId();
     recognition_log($caseId, null, 'system_check', null, 'chair_review', 'System calculated ' . recognition_list_label($list) . ' eligibility from official grades.');
     recognition_notify_role('program_chair', 'DL/PL candidate ready', 'A qualified student is ready for Program Chair review.', (int) $row['program_id']);
+    return $caseId;
+}
+
+/** Called inside grade approval's transaction; never approves incomplete semester records. */
+function recognition_approve_from_grades(array $user, int $studentId, int $semesterId): ?int
+{
+    $pack = semester_subject_results($studentId, $semesterId, 'official');
+    if (!$pack['complete']) return null;
+    $caseId = recognition_sync_candidate($studentId, $semesterId);
+    if (!$caseId) return null;
+    $query = db()->prepare('SELECT stage, program_id FROM recognition_cases WHERE id = ? FOR UPDATE');
+    $query->execute([$caseId]);
+    $case = $query->fetch();
+    if (!$case || !in_array($case['stage'], ['chair_review', 'chair_returned'], true)) return null;
+    if (!in_array('system_admin', $user['roles'], true)
+        && !in_array((int) $case['program_id'], chair_program_ids($user), true)) return null;
+    $note = 'Automatically approved for recognition after chair approval of complete semester grades.';
+    db()->prepare('UPDATE recognition_cases SET stage = "chair_endorsed", chair_user_id = ?, endorsed_at = NOW(), last_note = ?, required_action = NULL WHERE id = ?')
+        ->execute([(int) $user['id'], $note, $caseId]);
+    db()->prepare('UPDATE dl_pl_evaluations SET status = "Final Approved", is_final = 1, reviewer_id = ? WHERE student_id = ? AND semester_id = ? AND basis = "official"')
+        ->execute([(int) $user['id'], $studentId, $semesterId]);
+    recognition_log($caseId, (int) $user['id'], 'chair_grade_approval', $case['stage'], 'chair_endorsed', $note);
     return $caseId;
 }
 

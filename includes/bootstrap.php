@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/grades.php';
+require_once __DIR__ . '/modules.php';
 
 set_exception_handler(static function (Throwable $e): void {
     error_log($e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
@@ -12,7 +13,7 @@ set_exception_handler(static function (Throwable $e): void {
     $message = APP_DEBUG
         ? $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')'
         : 'The page could not be completed. The details were written to the server log.';
-    echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Error</title></head><body style="font-family:Segoe UI,sans-serif;background:#F5F7FA;color:#142B49;padding:40px;"><h1>Something went wrong</h1><p>'
+    echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Error</title>' . theme_assets_html() . '</head><body style="font-family:Segoe UI,sans-serif;background:#F5F7FA;color:#000058;padding:40px;"><h1>Something went wrong</h1><p>'
         . htmlspecialchars($message, ENT_QUOTES, 'UTF-8')
         . '</p></body></html>';
     exit;
@@ -41,8 +42,12 @@ function url(string $path = '', array $query = []): string
         }
         $path = substr($path, 0, $qpos);
     }
-    $base = rtrim(APP_BASE_PATH, '/');
     $path = ltrim($path, '/');
+    if (isset(module_routes()[$path])) {
+        [$path, $view] = module_routes()[$path];
+        $query['view'] = $view;
+    }
+    $base = rtrim(APP_BASE_PATH, '/');
     $full = $path === '' ? $base : ($base === '' ? '/' . $path : $base . '/' . $path);
     if ($full === '') {
         $full = '/';
@@ -66,13 +71,15 @@ function app_scope(): string
 
 function pwa_tags(): void
 {
+    theme_tags();
+    echo '<link rel="stylesheet" href="' . h(asset_url('assets/css/responsive.css')) . '">';
     ?>
     <link rel="manifest" href="<?= h(url('manifest.php')) ?>">
-    <meta name="theme-color" content="#142B49">
+    <meta name="theme-color" content="#000058">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="SPCC Grades">
-    <link rel="apple-touch-icon" href="<?= h(url('img/icon-192.png')) ?>">
+    <link rel="apple-touch-icon" href="<?= h(url('img/newest-icon-192.png')) ?>">
     <meta name="draft-url" content="<?= h(url('api/draft.php')) ?>">
     <meta name="professor-login" content="<?= h(url('professor/login.php')) ?>">
     <meta name="admin-login" content="<?= h(url('admin/login.php')) ?>">
@@ -80,6 +87,17 @@ function pwa_tags(): void
     <meta name="sw-url" content="<?= h(url('sw.js')) ?>">
     <meta name="sw-scope" content="<?= h(app_scope()) ?>">
     <?php
+}
+
+function theme_assets_html(): string
+{
+    return '<link rel="stylesheet" href="' . h(asset_url('assets/css/theme.css')) . '">'
+        . '<script src="' . h(asset_url('assets/js/theme.js')) . '"></script>';
+}
+
+function theme_tags(): void
+{
+    echo theme_assets_html();
 }
 
 function asset_url(string $path): string
@@ -223,12 +241,13 @@ function submission_label(string $status): string
 {
     return [
         'draft' => 'Draft',
-        'submitted' => 'With the Program Chair',
-        'returned' => 'Returned for correction',
-        'chair_verified' => 'Verified by the Program Chair',
-        'oic_approved' => 'Approved by the College OIC',
-        'osa_endorsed' => 'Endorsed by the Secretary',
-        'registrar_finalized' => 'Finalized by the Secretary',
+        'submitted' => 'Awaiting Chair Review',
+        'returned' => 'Returned for Revision',
+        'chair_verified' => 'Awaiting Chair Review',
+        'oic_approved' => 'Awaiting Chair Review',
+        'osa_endorsed' => 'Awaiting Chair Review',
+        'registrar_finalized' => 'Approved by Chair',
+        'rejected' => 'Rejected',
     ][$status] ?? $status;
 }
 
@@ -243,6 +262,7 @@ function badge(string $label, ?string $key = null): string
         'oic_approved' => 'info',
         'osa_endorsed' => 'info',
         'registrar_finalized' => 'ok',
+        'rejected' => 'bad',
         'Possible PL' => 'gold',
         'Possible DL' => 'info',
         'President\'s List' => 'gold',
@@ -342,9 +362,9 @@ function render_setup_error(Throwable $e): void
 {
     http_response_code(503);
     $detail = APP_DEBUG ? h($e->getMessage()) : 'The database rejected the connection.';
-    echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Setup required</title>
-    <style>body{font-family:Segoe UI,sans-serif;background:#142B49;color:#fff;margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:640px;background:#fff;color:#142B49;padding:32px;border-radius:16px}code{background:#F5F7FA;padding:2px 6px;border-radius:6px}</style>
-    </head><body><main><h1>Database setup is still needed</h1><p>' . $detail . '</p>
+    echo '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Setup required</title>' . theme_assets_html() . '
+    <style>body{font-family:Segoe UI,sans-serif;background:#000058;color:#fff;margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:640px;background:#fff;color:#000058;padding:32px;border-radius:16px}code{background:#F5F7FA;padding:2px 6px;border-radius:6px}</style>
+    </head><body><main class="setup-error-card"><h1>Database setup is still needed</h1><p>' . $detail . '</p>
     <ol><li>Start Apache and MySQL in the XAMPP Control Panel.</li>
     <li>Open the database in phpMyAdmin, then import <code>database/database.sql</code>.</li>
     <li>Check <code>.env</code> if local MySQL is not using user <code>root</code> with an empty password.</li></ol>

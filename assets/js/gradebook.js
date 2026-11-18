@@ -1,4 +1,73 @@
 (function () {
+    const dialog = document.querySelector('[data-gradebook-colors]');
+    const toggle = document.querySelector('[data-gradebook-color-toggle]');
+    if (!dialog || !toggle || typeof dialog.showModal !== 'function' || !CSS.supports('color', 'color-mix(in srgb, black, white)')) return;
+
+    const settingsKey = 'spcc-gradebook-colors:' + dialog.dataset.gradebookColors;
+    const inputs = [...dialog.querySelectorAll('input[type="color"][data-tone]')];
+    const pageStyle = document.body.style;
+    const themeStyle = getComputedStyle(document.documentElement);
+    const hexColor = /^#[\da-f]{6}$/i;
+    let saved = {};
+    try {
+        const stored = JSON.parse(localStorage.getItem(settingsKey)) || {};
+        saved = Object.fromEntries(inputs.map(input => input.dataset.tone)
+            .filter(tone => typeof stored[tone] === 'string' && hexColor.test(stored[tone]))
+            .map(tone => [tone, stored[tone]]));
+    } catch (_) {}
+    let draft = {};
+
+    function apply(colors) {
+        for (const input of inputs) {
+            const tone = input.dataset.tone;
+            for (const [suffix, surfacePercent] of [['', 74], ['-cell', 90], ['-ttl', 82]]) {
+                const token = '--' + tone + suffix;
+                if (colors[tone]) {
+                    pageStyle.setProperty(token, `color-mix(in srgb, var(--theme-surface) ${surfacePercent}%, ${colors[tone]})`);
+                } else {
+                    pageStyle.removeProperty(token);
+                }
+            }
+        }
+    }
+
+    function preview(colors) {
+        draft = { ...colors };
+        for (const input of inputs) {
+            const tone = input.dataset.tone;
+            input.value = draft[tone] || themeStyle.getPropertyValue('--' + tone).trim();
+        }
+        apply(draft);
+    }
+
+    apply(saved);
+    toggle.hidden = false;
+    toggle.addEventListener('click', function () {
+        preview(saved);
+        dialog.showModal();
+    });
+    for (const input of inputs) {
+        input.addEventListener('input', function () {
+            draft[input.dataset.tone] = input.value;
+            apply(draft);
+        });
+    }
+    dialog.querySelector('[data-gradebook-color-reset]').addEventListener('click', () => preview({}));
+    dialog.querySelector('[data-gradebook-color-cancel]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => apply(saved));
+    dialog.querySelector('form').addEventListener('submit', function (event) {
+        event.preventDefault();
+        saved = { ...draft };
+        try {
+            localStorage.setItem(settingsKey, JSON.stringify(saved));
+        } catch (_) {
+            toast('Colors apply for this visit. Browser storage is unavailable.', 'error');
+        }
+        dialog.close();
+    });
+})();
+
+(function () {
     const sheet = document.querySelector('[data-gradebook]');
     if (!sheet) return;
 

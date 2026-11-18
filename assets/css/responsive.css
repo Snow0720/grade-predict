@@ -1,0 +1,87 @@
+/* Override page-specific fixed widths without hiding wide table content. */
+html body :is(.workspace,.content,.card,.kpi,.dashboard-grid,.class-grid,.account-layout,.form-grid,.split,.sheet-body,.modern-class-card,.settings-container) { min-width: 0; }
+html body .table-wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+html body .mobile-nav-close { display: none; }
+@media screen and (max-width: 980px) {
+    html body.nav-open { overflow: hidden; }
+    html body .sidebar { width: min(280px, calc(100vw - 40px)); height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+    html body .sidebar .brand { padding-right: 42px; }
+    html body .mobile-nav-close { display: grid; place-items: center; position: absolute; top: 8px; right: 8px; width: 36px; height: 36px; border: 1px solid #ffffff55; border-radius: 8px; color: #fff; background: transparent; font-size: 26px; cursor: pointer; }
+    html body .who { max-width: 180px; overflow-wrap: anywhere; font-size: 13px; }
+    html body .class-grid { grid-template-columns: minmax(0, 1fr) !important; }
+    html body .auth-shell { min-width: 0; width: 100%; }
+    html body .auth-aside, html body .auth-main { min-width: 0; }
+    html body .auth-form { max-width: 100%; }
+}
+@media screen and (max-width: 760px) {
+    html body .topbar { display: grid; grid-template-columns: 44px minmax(0,1fr); gap: 8px; padding: 10px 12px; align-items: center; }
+    html body .topbar .icon-btn { width: 44px; height: 44px; }
+    html body .crumbs { width: 100%; overflow: hidden; }
+    html body .crumbs > :not(.top-title) { display: none; }
+    html body .crumbs .top-title { display: block; font-size: 17px; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+    html body .top-actions { grid-column: 1 / -1; width: 100%; margin: 0; min-width: 0; gap: 12px; }
+    html body .top-actions .who { order: -1; margin-right: auto; max-width: none; flex: 1; min-width: 0; text-align: left; }
+    html body .top-actions .who strong { overflow-wrap: anywhere; }
+    html body .top-actions .who small { display: block; font-size: 11px; }
+    html body .top-actions .bell { width: 44px; height: 44px; }
+    html body .content { padding: 14px 12px 28px; }
+    html body :is(.card,.modern-kpi-card,.modern-class-card) { padding: 16px; }
+    html body :is(.page-head,.card-head,.class-card-top,.class-card-top-bar,.class-card-bottom) { flex-wrap: wrap; align-items: center; gap: 10px; }
+    html body .page-head > *,html body .card-head > * { min-width: 0; max-width: 100%; }
+    html body :is(.card h2,.card-head h2) { font-size: 19px; overflow-wrap: anywhere; }
+    html body :is(.dashboard-grid,.split,.account-layout,.charts,.sheet-body,.form-grid,.kpi-grid-container) { grid-template-columns: minmax(0,1fr) !important; }
+    html body .form-grid > .wide { grid-column: 1 / -1; }
+    html body .filters { display: grid; grid-template-columns: minmax(0,1fr); align-items: stretch; gap: 10px; }
+    html body .filters :is(input:not([type="hidden"]),select,.btn),html body .column-tools select { width: 100%; min-width: 0; max-width: 100%; }
+    html body .filters > div { min-width: 0; }
+    html body .recog-bar { width: 100%; }
+    html body .recog-bar .btn { flex: 1 1 140px; justify-content: center; }
+    html body :is(.btn,.grade-eye,.scm-breakdown-btn,.pager a,.sheet-tabs a,.period-switch a,.module-tabs a) { min-height: 44px; }
+    html body .btn { white-space: normal; overflow-wrap: anywhere; }
+    html body :is(input:not([type="hidden"]),select,textarea) { font-size: 16px; max-width: 100%; }
+    html body input[type="checkbox"],html body input[type="radio"] { width: 20px; height: 20px; flex-shrink: 0; }
+    html body .dialog-actions,html body .account-form-actions { flex-wrap: wrap; }
+    html body .dialog-actions .btn { flex: 1 1 140px; }
+    html body .modal-card,html body dialog { max-width: calc(100vw - 24px); max-height: calc(100dvh - 32px); overflow: auto; }
+    html body .notification-panel { top: calc(var(--app-header-height, 116px) + 8px); right: 12px; max-height: calc(100dvh - var(--app-header-height, 116px) - 24px); display: flex; flex-direction: column; }
+    html body .notification-panel[hidden] { display: none !important; }
+    html body .notification-scroll { min-height: 0; max-height: calc(100dvh - var(--app-header-height, 116px) - 180px); }
+    html body .notification-toolbar .btn { min-height: 36px; }
+    html body .sheet-tabs,html body .period-switch { flex-wrap: wrap; }
+    html body .sheet-top .sheet-title,html body .sheet-meta { min-width: 0; overflow-wrap: anywhere; }
+    html body .sheet-meta { flex-basis: 100%; }
+    html body .column-tools { flex-wrap: wrap; gap: 10px; }
+    html body .sheet-scroll { width: 100%; max-width: 100%; overflow: auto; touch-action: pan-x pan-y; }
+    html body .grade-grid { min-width: 720px !important; }
+    html body .grade-grid :is(input.score,input.adj,select.attend) { min-height: 40px; }
+    html body .grade-grid thead tr:first-child th.sticky { height: auto; line-height: 1.35; padding-top: 10px; padding-bottom: 10px; }
+    html body .grade-grid th.col-name,html body .grade-grid td.col-name { left: 0; min-width: 132px; max-width: 160px; overflow-wrap: anywhere; }
+    html body .subject-performance-feedback { min-width: 0; max-width: 100%; }
+    html body .scm-head { flex-wrap: wrap; }
+    html body :is(.scm-title,.scm-prof,.student-meta-title,.student-tag) { overflow-wrap: anywhere; }
+    html body .student-profile-actions { flex-wrap: wrap; }
+    html body .student-sem-select { width: 100%; max-width: 100%; min-width: 0; }
+    html body .chart-details { max-width: 100%; overflow-x: auto; }
+    html body .horizontal-chart { --chart-label-width: 100px; }
+    html body .recognition-charts .recognition-summary-chart .horizontal-chart { --chart-label-width: 100px; }
+    html body .horizontal-chart-label { font-size: 12px; }
+    html body .community-donut .chart-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+    html body .draft-bar { flex-wrap: wrap; left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
+    html body .toaster { left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); }
+    html body .toast { max-width: 100%; }
+}
+@media screen and (max-width: 420px) {
+    html body .kpis { grid-template-columns: minmax(0,1fr) !important; }
+    html body .auth-main { padding: 16px 12px 78px; }
+    html body .auth-form { padding: 24px 16px; }
+    html body .auth-mark { gap: 10px; }
+    html body .auth-mark img { width: 52px; height: 52px; }
+    html body .auth-mark strong { font-size: 19px; }
+    html body .auth-foot { flex-wrap: wrap; gap: 12px; }
+    html body .gate { padding: 12px 12px 76px; }
+    html body .gate-main,html body .gate-seal { padding: 22px 16px; }
+    html body .portal-choices a { padding: 14px 10px; gap: 10px; }
+    html body .deadline-card { padding: 14px; }
+    html body .code-boxes { gap: 5px; }
+    html body .code-box { min-width: 0; padding: 4px; }
+}

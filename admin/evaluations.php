@@ -9,6 +9,12 @@ require_once __DIR__ . '/../includes/layout.php';
 
 db_or_setup();
 $user = require_portal('admin');
+$moduleController = module_controller('admin/evaluations.php', (string) ($_GET['view'] ?? ''));
+if ($moduleController !== null) {
+    require __DIR__ . '/' . $moduleController;
+    return;
+}
+
 require_permission($user, 'evaluations');
 
 $semesterId = (int) ($_GET['semester'] ?? $_POST['semester_id'] ?? 0);
@@ -148,8 +154,6 @@ foreach ($evals as $row) {
 
 // Filter students to include ONLY DL / PL candidates (excluding Pending & Not Eligible)
 $students = [];
-$plCount = 0;
-$dlCount = 0;
 
 foreach ($rawStudents as $student) {
     $pred = $byStudent[$student['id']]['predicted'] ?? null;
@@ -190,36 +194,17 @@ foreach ($rawStudents as $student) {
         continue;
     }
 
-    if ($isQualifiedPL) $plCount++;
-    if ($isQualifiedDL) $dlCount++;
-
     $students[] = $student;
 }
 
-layout_start('Dean’s List and President’s List', 'evaluations', [['label' => 'DL / PL']]);
+layout_start("Dean's List and President's List", 'evaluations', [['label' => 'DL / PL']]);
 ?>
 <div class="page-head">
     <div>
         <h1>Dean’s List and President’s List</h1>
-        <p class="lede">GWA is calculated as the unweighted mean of subject equivalents. Official endorsements are handled under Recognition.</p>
+        <p class="lede">GWA is calculated as the unweighted mean of subject equivalents.</p>
     </div>
 </div>
-
-<!-- Evaluation Summary Counters -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Total Honor Candidates</span>
-        <strong><?= count($students) ?></strong>
-    </article>
-    <article class="kpi">
-        <span>President’s List Candidates</span>
-        <strong><?= $plCount ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Dean’s List Candidates</span>
-        <strong><?= $dlCount ?></strong>
-    </article>
-</section>
 
 <!-- Auto-submitting Dynamic Filter Form -->
 <form class="filters" method="get" style="display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;">

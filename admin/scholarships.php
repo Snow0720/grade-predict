@@ -3,6 +3,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/../includes/bootstrap.php';
 require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/dashboard_charts.php';
+require_once __DIR__ . '/../includes/scholarship_summary.php';
 
 db_or_setup();
 $user = require_portal('admin');
@@ -77,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } catch (Throwable $e) {
         flash('error', $e->getMessage());
     }
-    redirect('admin/scholarships.php');
+    redirect('admin/scholarships.php', ['academic_year' => (int) ($_GET['academic_year'] ?? 0), 'semester' => (string) ($_GET['semester'] ?? '')]);
 }
 
 $categories = db()->query('SELECT * FROM scholarship_categories ORDER BY name')->fetchAll();
@@ -85,29 +87,42 @@ $students = db()->query('SELECT id, student_number, full_name FROM students ORDE
 
 // Multi-Semester Dropdown Query: Ordered by Academic Year and Semester Name
 $semesters = db()->query(
-    'SELECT sem.id, sem.name, ay.label 
+    'SELECT sem.id, sem.name, sem.academic_year_id, ay.label 
      FROM semesters sem 
      JOIN academic_years ay ON ay.id = sem.academic_year_id 
      ORDER BY ay.label DESC, sem.name ASC'
 )->fetchAll();
 
-$assignments = db()->query(
-    'SELECT sa.*, st.full_name, st.student_number, sc.name AS category_name, sem.name AS semester_name, ay.label
+$academicYears = db()->query('SELECT id, label FROM academic_years ORDER BY label DESC')->fetchAll();
+$academicYear = max(0, (int) ($_GET['academic_year'] ?? 0));
+if (!in_array($academicYear, array_map('intval', array_column($academicYears, 'id')), true)) $academicYear = 0;
+$semesterNames = array_values(array_unique(array_column($semesters, 'name')));
+$semesterFilter = (string) ($_GET['semester'] ?? '');
+if (!in_array($semesterFilter, $semesterNames, true)) $semesterFilter = '';
+$where = [];
+$params = [];
+if ($academicYear > 0) {
+    $where[] = 'sem.academic_year_id = ?';
+    $params[] = $academicYear;
+}
+if ($semesterFilter !== '') {
+    $where[] = 'sem.name = ?';
+    $params[] = $semesterFilter;
+}
+$assignmentQuery = db()->prepare(
+    'SELECT sa.*, st.full_name, st.student_number, st.program_id, sc.name AS category_name, sem.name AS semester_name, ay.label
      FROM scholarship_assignments sa
      JOIN students st ON st.id = sa.student_id
      JOIN scholarship_categories sc ON sc.id = sa.category_id
      JOIN semesters sem ON sem.id = sa.semester_id
-     JOIN academic_years ay ON ay.id = sem.academic_year_id
-     ORDER BY sa.assigned_at DESC'
-)->fetchAll();
-
-// Statistics
-$totalCategories = count($categories);
-$activeGrants = 0;
-foreach ($assignments as $a) {
-    if ($a['status'] === 'assigned') $activeGrants++;
-}
-$totalAssignments = count($assignments);
+     JOIN academic_years ay ON ay.id = sem.academic_year_id'
+     . ($where ? ' WHERE ' . implode(' AND ', $where) : '') . ' ORDER BY sa.assigned_at DESC'
+);
+$assignmentQuery->execute($params);
+$assignments = $assignmentQuery->fetchAll();
+$programs = db()->query('SELECT id, code FROM programs ORDER BY code')->fetchAll();
+$summary = scholarship_summary($assignments, $programs);
+$programGroups = $summary['programs'];
 
 layout_start('Scholarship & TES Subsidy Management', 'scholarships', [['label' => 'Scholarships']]);
 ?>
@@ -118,19 +133,32 @@ layout_start('Scholarship & TES Subsidy Management', 'scholarships', [['label' =
     </div>
 </div>
 
-<!-- Summary Metrics Header -->
-<section class="kpis">
-    <article class="kpi">
-        <span>Scholarship Categories</span>
-        <strong><?= $totalCategories ?></strong>
+<form class="filters" method="get" action="<?= h(url('admin/evaluations.php')) ?>">
+    <input type="hidden" name="view" value="scholarships">
+    <div>
+        <label for="scholarship-academic-year">Academic Year</label>
+        <select id="scholarship-academic-year" name="academic_year" onchange="this.form.requestSubmit()">
+            <option value="0">All academic years</option>
+            <?php foreach ($academicYears as $year): ?><option value="<?= (int) $year['id'] ?>" <?= $academicYear === (int) $year['id'] ? 'selected' : '' ?>><?= h($year['label']) ?></option><?php endforeach; ?>
+        </select>
+    </div>
+    <div>
+        <label for="scholarship-semester">Semester</label>
+        <select id="scholarship-semester" name="semester" onchange="this.form.requestSubmit()">
+            <option value="">All semesters</option>
+            <?php foreach ($semesterNames as $semesterName): ?><option value="<?= h($semesterName) ?>" <?= $semesterFilter === $semesterName ? 'selected' : '' ?>><?= h($semesterName) ?></option><?php endforeach; ?>
+        </select>
+    </div>
+    <button type="submit" class="btn">Apply Filters</button>
+    <a class="btn btn-ghost" href="<?= h(url('admin/scholarships.php')) ?>">Reset</a>
+</form>
+
+<section class="dashboard-grid scholarship-program-charts" aria-label="Breakdown by program for the selected period">
+    <article class="card">
+        <?php dashboard_horizontal_bars('active-grants-program', 'Active Term Grants by Program', $programGroups, ['active' => 'Active Grants'], 'Program'); ?>
     </article>
-    <article class="kpi">
-        <span>Active Term Grants</span>
-        <strong><?= $activeGrants ?></strong>
-    </article>
-    <article class="kpi">
-        <span>Total Beneficiaries</span>
-        <strong><?= $totalAssignments ?></strong>
+    <article class="card">
+        <?php dashboard_horizontal_bars('beneficiaries-program', 'Beneficiaries by Program', $programGroups, ['beneficiaries' => 'Total Beneficiaries'], 'Program'); ?>
     </article>
 </section>
 
@@ -231,7 +259,7 @@ layout_start('Scholarship & TES Subsidy Management', 'scholarships', [['label' =
                         <th>Scholarship Category</th>
                         <th>Benefit Mode</th>
                         <th>Status</th>
-                        <th style="text-align: right;">Action</th>
+                        <th style="text-align: left;">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -245,11 +273,11 @@ layout_start('Scholarship & TES Subsidy Management', 'scholarships', [['label' =
                         <td><strong><?= h($row['category_name']) ?></strong></td>
                         <td>
                             <?php if ((float)$row['discount_percent'] > 0): ?>
-                                <span class="badge" style="background: #e3f2fd; color: #1565c0; font-weight: 600;">
+                            <span class="badge badge-info" style="font-weight: 600;">
                                     <?= h(number_format((float) $row['discount_percent'], 0)) ?>% (Balance Deduction / Cash)
                                 </span>
                             <?php else: ?>
-                                <span class="badge" style="background: #e8f5e9; color: #2e7d32; font-weight: 600;">
+                            <span class="badge badge-ok" style="font-weight: 600;">
                                     CHED Grant (Deduction / Cash Payout)
                                 </span>
                             <?php endif; ?>
