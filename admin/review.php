@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             review_submission($user, $id, (string) ($_POST['review_action'] ?? ''), (string) ($_POST['remarks'] ?? ''));
             flash('ok', 'Review action recorded successfully.');
             if (($_POST['review_action'] ?? '') === 'approve') {
-                flash('ok', 'Qualified students with complete approved semester grades are now in Recognition. Their certificates are ready through Print Certificates.');
+                flash('ok', 'Class grades have been finalized. Qualified students are now available for Recognition review.');
                 redirect('admin/recognition.php', ['semester' => (int) $assignment['semester_id'], 'stage' => '']);
             }
         }
